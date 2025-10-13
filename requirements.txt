@@ -8,3 +8,4 @@ pytz>=2024.1
 tzdata>=2024.1
 notion-client>=2.2.1
 requests>=2.32.0
+PyYAML>=6.0
