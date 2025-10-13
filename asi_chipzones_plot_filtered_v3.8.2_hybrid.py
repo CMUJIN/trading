@@ -12,6 +12,41 @@ import argparse
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+# =============================
+# ✅ 解决中文乱码
+# =============================
+import matplotlib
+import os
+
+# 尝试使用 GitHub Actions 自带的 Noto 字体（或本地可用的中文字体）
+font_candidates = [
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.otf",
+    "/usr/share/fonts/truetype/arphic/ukai.ttc",
+    "/System/Library/Fonts/STHeiti Light.ttc",
+    "SimHei", "Microsoft YaHei", "PingFang SC"
+]
+
+font_path = None
+for f in font_candidates:
+    if os.path.exists(f) or f in matplotlib.font_manager.findSystemFonts(fontpaths=None, fontext='ttf'):
+        font_path = f
+        break
+
+if font_path:
+    try:
+        matplotlib.font_manager.fontManager.addfont(font_path)
+        font_name = matplotlib.font_manager.FontProperties(fname=font_path).get_name()
+        matplotlib.rcParams['font.sans-serif'] = [font_name]
+        print(f"[INFO] ✅ 使用字体: {font_name}")
+    except Exception as e:
+        print(f"[WARN] 字体加载失败: {e}")
+else:
+    matplotlib.rcParams['font.sans-serif'] = ['Noto Sans CJK SC', 'SimHei', 'Microsoft YaHei']
+    print("[WARN] 未找到指定字体, 尝试系统默认中文字体")
+
+matplotlib.rcParams['axes.unicode_minus'] = False  # 修复负号显示问题
+
 from matplotlib import font_manager
 
 def setup_chinese_font():
