@@ -1,0 +1,10 @@
+akshare>=1.13.82
+pandas>=2.2.0
+numpy>=1.26.0
+matplotlib>=3.8.0
+openpyxl>=3.1.2
+python-dateutil>=2.9.0.post0
+pytz>=2024.1
+tzdata>=2024.1
+notion-client>=2.2.1
+requests>=2.32.0
