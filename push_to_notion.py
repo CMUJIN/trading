@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import os, sys, glob, datetime as dt
+import os, sys, glob, csv, datetime as dt
 from notion_client import Client
 
 TOKEN = os.environ.get("NOTION_TOKEN")
@@ -14,79 +14,86 @@ if not TOKEN:
 
 notion = Client(auth=TOKEN)
 
-def ensure_database():
+def ensure_database(sample_fields):
     global DB_ID
     if DB_ID:
         return DB_ID
-    # Search existing
-    target_title = "Futures Chip Analysis"
-    try:
-        res = notion.search(query=target_title, filter={"value":"database","property":"object"})
-        for obj in res.get("results", []):
-            if obj["object"] == "database":
-                title = ""
-                tprop = obj.get("title", [])
-                if tprop:
-                    if "text" in tprop[0]:
-                        title = tprop[0]["text"]["content"]
-                    elif "plain_text" in tprop[0]:
-                        title = tprop[0]["plain_text"]
-                if title == target_title:
-                    DB_ID = obj["id"]
-                    return DB_ID
-    except Exception as e:
-        print("[search database] warn:", e, file=sys.stderr)
 
+    title = "Futures Chip Analysis"
+    # Create if needed
     if not PARENT:
         print("[push_to_notion] NOTION_DB not set and NOTION_PARENT_PAGE missing; cannot create database.", file=sys.stderr)
         sys.exit(3)
 
+    # Build property schema: Title + Date + Url + all CSV fields (numbers or text)
+    props = {
+        "品种": {"title": {}},
+        "日期": {"date": {}},
+        "图表链接": {"url": {}},
+    }
+    # Map CSV fields to number/text automatically
+    for key in sample_fields:
+        # Heuristic: numeric-like fields
+        props[key] = {"number": {}}
+
     db = notion.databases.create(
         parent={"type":"page_id","page_id":PARENT},
-        title=[{"type":"text","text":{"content": target_title}}],
-        properties={
-            "品种": {"title": {}},
-            "日期": {"date": {}},
-            "图表链接": {"url": {}},
-            "备注": {"rich_text": {}},
-        }
+        title=[{"type":"text","text":{"content": title}}],
+        properties=props
     )
     DB_ID = db["id"]
     print("[push_to_notion] Created database:", DB_ID)
     return DB_ID
 
-def upsert_record(symbol, url):
-    dbid = ensure_database()
+def upsert_rows(symbol, png_url, csv_path):
+    # Read CSV
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+    if not rows:
+        return
+
+    # Ensure DB with these fields
+    dbid = ensure_database(reader.fieldnames)
+
     today = dt.date.today().isoformat()
-    notion.pages.create(
-        parent={"database_id": dbid},
-        properties={
+    # Push top N rows (to avoid Notion limits); you can adjust
+    for r in rows[:100]:
+        props = {
             "品种": {"title": [{"text": {"content": symbol}}]},
             "日期": {"date": {"start": today}},
-            "图表链接": {"url": url},
+            "图表链接": {"url": png_url},
         }
-    )
+        for k, v in r.items():
+            try:
+                num = float(v)
+            except:
+                num = None
+            if num is not None:
+                props[k] = {"number": num}
+            else:
+                # fallback as rich_text
+                props[k] = {"rich_text": [{"text": {"content": str(v)}}]}
+
+        notion.pages.create(parent={"database_id": dbid}, properties=props)
 
 def main():
     if not PAGES_BASE:
-        print("[push_to_notion] PAGES_BASE not set; skipping (set to your GitHub Pages base URL).", file=sys.stderr)
+        print("[push_to_notion] PAGES_BASE not set; skipping Notion push.", file=sys.stderr)
         return
 
     docs = "docs"
     for symdir in sorted(glob.glob(os.path.join(docs, "*"))):
-        if not os.path.isdir(symdir):
+        if not os.path.isdir(symdir): 
             continue
         symbol = os.path.basename(symdir)
-        latest = os.path.join(symdir, f"{symbol}_latest.png")
-        if not os.path.exists(latest):
-            pngs = glob.glob(os.path.join(symdir, "*.png"))
-            if not pngs:
-                continue
-            pngs.sort(key=os.path.getmtime, reverse=True)
-            latest = pngs[0]
-        url = f"{PAGES_BASE}/{symbol}/{os.path.basename(latest)}"
-        upsert_record(symbol, url)
-        print(f"[push_to_notion] Upserted {symbol} -> {url}")
+        png   = os.path.join(symdir, f"{symbol}_chipzones_hybrid.png")
+        csvf  = os.path.join(symdir, f"{symbol}_chipzones_hybrid.csv")
+        if not os.path.exists(png) or not os.path.exists(csvf):
+            continue
+        png_url = f"{PAGES_BASE}/{symbol}/{os.path.basename(png)}"
+        upsert_rows(symbol, png_url, csvf)
+        print(f"[push_to_notion] Pushed {symbol}: {png_url} & {os.path.basename(csvf)}")
 
 if __name__ == "__main__":
     main()

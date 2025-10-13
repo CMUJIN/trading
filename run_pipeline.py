@@ -50,6 +50,7 @@ def main():
         start = str(item["start"])
         end   = today
 
+        # 1) download
         dl_cmd = [
             sys.executable, DOWNLOADER,
             "--symbols", sym,
@@ -65,14 +66,15 @@ def main():
             print(f"[WARN] Downloader failed for {sym}, continue next.", file=sys.stderr)
             continue
 
-        csv = latest_file(os.path.join(out_dir, f"*{sym}*{freq}*.csv")) or latest_file(os.path.join(out_dir, f"*{sym}*.csv"))
-        if not csv:
+        # 2) analyze
+        csv_in = latest_file(os.path.join(out_dir, f"*{sym}*{freq}*.csv")) or latest_file(os.path.join(out_dir, f"*{sym}*.csv"))
+        if not csv_in:
             print(f"[WARN] No CSV for {sym}. Skipping analysis.")
             continue
 
         ana_cmd = [
             sys.executable, ANALYZER,
-            "--csv", csv,
+            "--csv", csv_in,
             "--window_strength", str(ana.get("window_strength",20)),
             "--window_zone",     str(ana.get("window_zone",60)),
             "--bins_pct",        str(ana.get("bins_pct",0.5)),
@@ -86,15 +88,26 @@ def main():
             print(f"[WARN] Analysis failed for {sym}.", file=sys.stderr)
             continue
 
+        # 3) collect outputs -> docs/{symbol}/
         sym_dir = os.path.join(pages_root, sym)
         ensure_dir(sym_dir)
-        latest_png = latest_file(os.path.join(BASE, f"*{sym}*.png"))
-        latest_xlsx = latest_file(os.path.join(BASE, f"*{sym}*.xlsx"))
+
+        # png
+        latest_png = latest_file(os.path.join(BASE, f"*{sym}*_chipzones_hybrid.png")) or latest_file(os.path.join(BASE, f"*{sym}*.png"))
         if latest_png:
             shutil.copy2(latest_png, os.path.join(sym_dir, os.path.basename(latest_png)))
-            shutil.copy2(latest_png, os.path.join(sym_dir, f"{sym}_latest.png"))
-        if latest_xlsx:
-            shutil.copy2(latest_xlsx, os.path.join(sym_dir, os.path.basename(latest_xlsx)))
+            shutil.copy2(latest_png, os.path.join(sym_dir, f"{sym}_chipzones_hybrid.png"))  # stable name
+
+        # csv (zones)
+        latest_zcsv = latest_file(os.path.join(BASE, f"*{sym}*_chipzones_hybrid.csv"))
+        if latest_zcsv:
+            shutil.copy2(latest_zcsv, os.path.join(sym_dir, os.path.basename(latest_zcsv)))
+            shutil.copy2(latest_zcsv, os.path.join(sym_dir, f"{sym}_chipzones_hybrid.csv"))
+
+        # cleanup: ignore xlsx artifacts
+        for f in glob.glob(os.path.join(BASE, f"*{sym}*.xlsx")):
+            try: os.remove(f)
+            except: pass
 
     print("Pipeline complete ✅")
 
