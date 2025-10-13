@@ -6,6 +6,10 @@ from notion_client import Client
 TOKEN = os.environ.get("NOTION_TOKEN")
 DB_ID = os.environ.get("NOTION_DB", "").strip()
 PARENT = os.environ.get("NOTION_PARENT_PAGE", "").strip()
+# 如果 DB_ID 是占位符，则清空
+if DB_ID.lower().startswith("placeholder") or DB_ID == "None":
+    DB_ID = ""
+
 PAGES_BASE = os.environ.get("PAGES_BASE", "").strip()
 
 if not TOKEN:
