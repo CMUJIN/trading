@@ -145,8 +145,13 @@ def build_symbol_directory(symbols):
             children.append({
                 "object": "block",
                 "type": "paragraph",
-                "paragraph": {"rich_text": [{"type": "text", "text": {"content": f"⚠️ CSV not found for {sym}"}]}},
+                "paragraph": {
+                    "rich_text": [
+                        {"type": "text", "text": {"content": f"⚠️ CSV not found for {sym}"}}
+                    ]
+                }
             })
+
 
     notion.blocks.children.append(directory["id"], children=children)
     print(f"[push_to_notion] ✅ Directory rebuilt with {len(symbols)} symbols.")
