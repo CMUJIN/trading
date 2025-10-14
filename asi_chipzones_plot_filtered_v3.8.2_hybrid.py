@@ -161,17 +161,29 @@ def plot_chart(df,zones,symbol):
     lines1,labels1=ax1.get_legend_handles_labels()
     lines2,labels2=ax1b.get_legend_handles_labels()
     ax1.legend(lines1+lines2,labels1+labels2,loc='upper right',fontsize=9)
-    # 副图：成交量 + 持仓量
+    # 📊 副图：成交量 + 持仓量（双轴）
+    # =============================
+    
+    # 左轴：成交量
     ax2.bar(df.index, df["volume"], color="gray", label="volume")
-    ax2.plot(df.index, df["open_interest"], color="blue", label="OI")
-    ax2.legend(loc='upper right',fontsize=9)
-
-    # ✅ 自动调整持仓量y轴下限
+    ax2.set_ylabel("成交量", color="gray")
+    ax2.tick_params(axis='y', labelcolor='gray')
+    
+    # 右轴：持仓量
+    ax3 = ax2.twinx()
+    ax3.plot(df.index, df["open_interest"], color="blue", label="OI")
+    ax3.set_ylabel("volume", color="blue")
+    ax3.tick_params(axis='y', labelcolor='blue')
+    
+    # 自动设置持仓量上下限
     oi_min = df["open_interest"].min()
     oi_max = df["open_interest"].max()
-    margin = (oi_max - oi_min) * 0.05  # 上下各5%缓冲
-    ax2.set_ylim(oi_min - margin, oi_max + margin)
-    ax2.set_ylabel("OI")
+    margin = (oi_max - oi_min) * 0.05
+    ax3.set_ylim(oi_min - margin, oi_max + margin)
+    
+    # 图例放右上角，避免遮挡
+    ax3.legend(loc="upper right")
+
 
     
     if 'datetime' in df.columns:
