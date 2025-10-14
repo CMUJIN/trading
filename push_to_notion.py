@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-push_to_notion_v3.2_clear_db.py
-✅ 每次运行自动清空数据库旧数据
-✅ 自动重建目录
-✅ 修复 /docs/ 链接过滤
-✅ 兼容 symbols 为 dict 或 str
+push_to_notion_v3.3_autofix_fields.py
+✅ 自动清空数据库旧数据
+✅ 自动补齐缺失字段（rich_text 类型）
+✅ 兼容 utf-8-sig（去除 BOM）
+✅ 自动重建目录页
+✅ 修复 /docs/ 路径
 """
 
 import os
@@ -21,7 +22,7 @@ PAGES_BASE = os.getenv("PAGES_BASE", "https://cmujin.github.io/trading")
 notion = Client(auth=NOTION_TOKEN)
 
 # -----------------------------
-# 安全文本块包装
+# 公共函数
 # -----------------------------
 def safe_text_block(content, block_type="heading_2"):
     return {
@@ -30,8 +31,9 @@ def safe_text_block(content, block_type="heading_2"):
         block_type: {"rich_text": [{"type": "text", "text": {"content": str(content)}}]},
     }
 
+
 # -----------------------------
-# 清空数据库（归档旧页面）
+# 清空数据库
 # -----------------------------
 def clear_database(database_id):
     try:
@@ -51,8 +53,31 @@ def clear_database(database_id):
     except Exception as e:
         print(f"[WARN] Failed to clear database: {e}")
 
+
 # -----------------------------
-# 清空目录内容（保留目录本身）
+# 自动补齐数据库字段
+# -----------------------------
+def ensure_properties_exist(database_id, fieldnames):
+    try:
+        db = notion.databases.retrieve(database_id)
+        existing_props = db["properties"].keys()
+
+        for name in fieldnames:
+            clean_name = name.strip().replace("﻿", "")  # 去掉 BOM
+            if clean_name not in existing_props:
+                notion.databases.update(
+                    database_id=database_id,
+                    properties={clean_name: {"rich_text": {}}}
+                )
+                print(f"[push_to_notion] ➕ Added missing property: {clean_name}")
+
+        print("[push_to_notion] ✅ 数据库字段已自动补齐。")
+    except Exception as e:
+        print(f"[WARN] Failed to update properties: {e}")
+
+
+# -----------------------------
+# 清空目录页（保留自身结构）
 # -----------------------------
 def clear_directory(directory_id):
     try:
@@ -68,8 +93,9 @@ def clear_directory(directory_id):
     except Exception as e:
         print(f"[WARN] Failed to clear directory: {e}")
 
+
 # -----------------------------
-# 构建符号目录页
+# 构建目录页
 # -----------------------------
 def build_symbol_directory(symbols):
     print("[push_to_notion] 🔁 Rebuilding Symbol Directory page...")
@@ -80,13 +106,11 @@ def build_symbol_directory(symbols):
     for code in symbols:
         csv_path = f"docs/{code}/{code}_chipzones_hybrid.csv"
         img_path = f"docs/{code}/{code}_chipzones_hybrid.png"
-
         csv_url = f"{PAGES_BASE}/{code}/{code}_chipzones_hybrid.csv"
         img_url = f"{PAGES_BASE}/{code}/{code}_chipzones_hybrid.png"
 
         children.append(safe_text_block(f"{code} Analysis"))
 
-        # 图片
         if os.path.exists(img_path):
             children.append({
                 "object": "block",
@@ -96,9 +120,8 @@ def build_symbol_directory(symbols):
         else:
             children.append(safe_text_block(f"⚠️ Image not found for {code}", "paragraph"))
 
-        # CSV 表格文本
         if os.path.exists(csv_path):
-            with open(csv_path, "r", encoding="utf-8") as f:
+            with open(csv_path, "r", encoding="utf-8-sig") as f:
                 csv_text = f.read()
             children.append({
                 "object": "block",
@@ -114,28 +137,32 @@ def build_symbol_directory(symbols):
     notion.blocks.children.append(directory_id, children=children)
     print(f"[push_to_notion] ✅ Directory rebuilt with {len(symbols)} symbols.")
 
+
 # -----------------------------
-# 上传 CSV 数据到数据库
+# 上传数据
 # -----------------------------
 def upsert_rows(code, csv_path):
     csv_url = f"{PAGES_BASE}/{code}/{code}_chipzones_hybrid.csv"
     img_url = f"{PAGES_BASE}/{code}/{code}_chipzones_hybrid.png"
 
-    try:
-        with open(csv_path, "r", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                props = {
-                    "Name": {"title": [{"text": {"content": f"{code} Analysis"}}]},
-                    "CSV": {"url": csv_url},
-                    "Image": {"url": img_url},
-                }
-                for k, v in row.items():
-                    props[k] = {"rich_text": [{"text": {"content": str(v)}}]}
+    with open(csv_path, "r", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        ensure_properties_exist(NOTION_DB, reader.fieldnames)
+        for row in reader:
+            props = {
+                "Name": {"title": [{"text": {"content": f"{code} Analysis"}}]},
+                "CSV": {"url": csv_url},
+                "Image": {"url": img_url},
+            }
+            for k, v in row.items():
+                clean_key = k.strip().replace("﻿", "")
+                props[clean_key] = {"rich_text": [{"text": {"content": str(v)}}]}
+            try:
                 notion.pages.create(parent={"database_id": NOTION_DB}, properties=props)
-        print(f"[push_to_notion] ✅ Uploaded rows for {code}")
-    except APIResponseError as e:
-        print(f"[WARN] Failed row for {code}: {e}")
+            except APIResponseError as e:
+                print(f"[WARN] Failed row for {code}: {e}")
+    print(f"[push_to_notion] ✅ Uploaded rows for {code}")
+
 
 # -----------------------------
 # 主入口
@@ -143,13 +170,11 @@ def upsert_rows(code, csv_path):
 def main():
     print("[push_to_notion] Starting upload process...")
 
-    # 清空数据库
     if NOTION_DB:
         clear_database(NOTION_DB)
     else:
         print("[WARN] NOTION_DB not set, skipping clear.")
 
-    # 加载配置文件
     with open("config.yaml", "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
@@ -157,7 +182,6 @@ def main():
     symbols = [s["code"] if isinstance(s, dict) and "code" in s else s for s in raw_symbols]
     print(f"[push_to_notion] Symbols to upload: {symbols}")
 
-    # 上传数据
     for code in symbols:
         csv_path = f"docs/{code}/{code}_chipzones_hybrid.csv"
         if os.path.exists(csv_path):
@@ -165,9 +189,7 @@ def main():
         else:
             print(f"[WARN] CSV not found for {code}: {csv_path}")
 
-    # 构建目录
     build_symbol_directory(symbols)
-
     print("[push_to_notion] ✅ All tasks completed.")
 
 
