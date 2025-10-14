@@ -1,22 +1,20 @@
 # -*- coding: utf-8 -*-
 """
-push_to_notion_v2.5_final_stable.py
+push_to_notion_v2.6_auto_config.py
 ----------------------------------
-✅ 单数据库模式（不重复创建）
-✅ 每次自动清空并重建目录页（彻底解决残留 Symbol 问题）
-✅ CSV 表格以 Markdown 形式显示
-✅ 复用现有 Image 列，不重复生成 Chart 列
-✅ GitHub Pages 链接修正（不再乱码）
+✅ 自动读取 config.yaml 中的 symbols 列表
+✅ 自动清空并重建目录页（防止重复）
+✅ 保留 Notion 数据库，不重复创建字段
+✅ 自动忽略缺失文件
+✅ 不再写死任何 symbol
 """
 
 import os
 import csv
+import yaml
 from notion_client import Client
 from notion_client.errors import APIResponseError
 
-# ======================
-# 环境变量
-# ======================
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 NOTION_DB = os.getenv("NOTION_DB")
 NOTION_PARENT_PAGE = os.getenv("NOTION_PARENT_PAGE")
@@ -27,28 +25,21 @@ if not NOTION_TOKEN or not NOTION_DB:
 
 notion = Client(auth=NOTION_TOKEN)
 
-# ======================
-# 辅助函数
-# ======================
+
 def safe_text_block(content, block_type="heading_2"):
-    """生成兼容的 Notion 文本块"""
     return {
         "object": "block",
         "type": block_type,
-        block_type: {
-            "rich_text": [{"type": "text", "text": {"content": content}}],
-        },
+        block_type: {"rich_text": [{"type": "text", "text": {"content": content}}]},
     }
 
 
 def read_csv(csv_path):
-    """读取 CSV 内容"""
     with open(csv_path, "r", encoding="utf-8") as f:
         return f.read()
 
 
 def clear_directory(directory_id):
-    """清空目录页内容"""
     try:
         children = notion.blocks.children.list(directory_id)["results"]
         for child in children:
@@ -59,34 +50,24 @@ def clear_directory(directory_id):
 
 
 def build_symbol_directory(symbols):
-    """重建 Symbol Directory 页面"""
     print("[push_to_notion] 🔁 Rebuilding Symbol Directory page...")
     directory_id = NOTION_PARENT_PAGE
-    if not directory_id:
-        raise ValueError("❌ NOTION_PARENT_PAGE 未设置")
-
-    # 清空目录
     clear_directory(directory_id)
 
     children = []
-
     for sym in symbols:
         csv_path = f"docs/{sym}/{sym}_chipzones_hybrid.csv"
-        png_path = f"docs/{sym}/{sym}_chipzones_hybrid.png"
+        img_path = f"docs/{sym}/{sym}_chipzones_hybrid.png"
         csv_url = f"{PAGES_BASE}/docs/{sym}/{sym}_chipzones_hybrid.csv"
         img_url = f"{PAGES_BASE}/docs/{sym}/{sym}_chipzones_hybrid.png"
 
-        # 标题块
         children.append(safe_text_block(f"{sym} Analysis"))
-
-        # 图片块
         children.append({
             "object": "block",
             "type": "image",
             "image": {"type": "external", "external": {"url": img_url}},
         })
 
-        # 表格块（用 Markdown 渲染）
         if os.path.exists(csv_path):
             csv_text = read_csv(csv_path)
             children.append({
@@ -102,19 +83,11 @@ def build_symbol_directory(symbols):
         else:
             children.append(safe_text_block(f"⚠️ CSV not found for {sym}", "paragraph"))
 
-    # 一次性写入
-    try:
-        notion.blocks.children.append(directory_id, children=children)
-        print(f"[push_to_notion] ✅ Directory rebuilt with {len(symbols)} symbols.")
-    except APIResponseError as e:
-        print(f"[ERROR] Directory rebuild failed: {e}")
-        raise
+    notion.blocks.children.append(directory_id, children=children)
+    print(f"[push_to_notion] ✅ Directory rebuilt with {len(symbols)} symbols.")
 
 
-def upsert_rows(symbol, csv_path, png_path):
-    """上传数据到数据库"""
-    print(f"[push_to_notion] ⬆️ Uploading {symbol} to Notion...")
-
+def upsert_rows(symbol, csv_path):
     csv_url = f"{PAGES_BASE}/docs/{symbol}/{symbol}_chipzones_hybrid.csv"
     img_url = f"{PAGES_BASE}/docs/{symbol}/{symbol}_chipzones_hybrid.png"
 
@@ -124,31 +97,27 @@ def upsert_rows(symbol, csv_path, png_path):
             props = {
                 "Name": {"title": [{"text": {"content": f"{symbol} 筹码分析"}}]},
                 "CSV": {"url": csv_url},
-                "Image": {"url": img_url},  # ✅ 复用 Image 字段
+                "Image": {"url": img_url},
             }
-            # 其他字段统一转文本
             for k, v in row.items():
                 props[k] = {"rich_text": [{"text": {"content": str(v)}}]}
-
             try:
                 notion.pages.create(parent={"database_id": NOTION_DB}, properties=props)
             except APIResponseError as e:
                 print(f"[WARN] Failed row for {symbol}: {e}")
 
 
-# ======================
-# 主执行逻辑
-# ======================
 def main():
-    symbols = ["JM2601", "M2605"]  # 这里可以改成从 config.yaml 动态读取
+    with open("config.yaml", "r", encoding="utf-8") as f:
+        config = yaml.safe_load(f)
+    symbols = config.get("symbols", [])
 
     print(f"[push_to_notion] Starting upload for symbols: {symbols}")
 
     for sym in symbols:
         csv_path = f"docs/{sym}/{sym}_chipzones_hybrid.csv"
-        png_path = f"docs/{sym}/{sym}_chipzones_hybrid.png"
         if os.path.exists(csv_path):
-            upsert_rows(sym, csv_path, png_path)
+            upsert_rows(sym, csv_path)
         else:
             print(f"[WARN] CSV not found for {sym}: {csv_path}")
 
