@@ -123,8 +123,13 @@ def build_symbol_directory(symbols):
         children.append({
             "object": "block",
             "type": "heading_2",
-            "heading_2": {"text": [{"type": "text", "text": {"content": sym}}]},
+            "heading_2": {
+                "rich_text": [
+                    {"type": "text", "text": {"content": sym}}
+                ]
+            }
         })
+
         children.append({
             "object": "block",
             "type": "image",
