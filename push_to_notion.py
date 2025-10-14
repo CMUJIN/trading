@@ -1,16 +1,18 @@
 # -*- coding: utf-8 -*-
 """
-push_to_notion_v3.3_autofix_fields.py
+push_to_notion_v3.4_refresh_image_cache.py
 ✅ 自动清空数据库旧数据
 ✅ 自动补齐缺失字段（rich_text 类型）
 ✅ 兼容 utf-8-sig（去除 BOM）
 ✅ 自动重建目录页
 ✅ 修复 /docs/ 路径
+✅ 新增：图片URL加时间戳参数，强制刷新 Notion 图片缓存
 """
 
 import os
 import csv
 import yaml
+import time
 from notion_client import Client
 from notion_client.errors import APIResponseError
 
@@ -30,7 +32,6 @@ def safe_text_block(content, block_type="heading_2"):
         "type": block_type,
         block_type: {"rich_text": [{"type": "text", "text": {"content": str(content)}}]},
     }
-
 
 # -----------------------------
 # 清空数据库
@@ -53,7 +54,6 @@ def clear_database(database_id):
     except Exception as e:
         print(f"[WARN] Failed to clear database: {e}")
 
-
 # -----------------------------
 # 自动补齐数据库字段
 # -----------------------------
@@ -75,9 +75,8 @@ def ensure_properties_exist(database_id, fieldnames):
     except Exception as e:
         print(f"[WARN] Failed to update properties: {e}")
 
-
 # -----------------------------
-# 清空目录页（保留自身结构）
+# 清空目录页
 # -----------------------------
 def clear_directory(directory_id):
     try:
@@ -93,9 +92,8 @@ def clear_directory(directory_id):
     except Exception as e:
         print(f"[WARN] Failed to clear directory: {e}")
 
-
 # -----------------------------
-# 构建目录页
+# 构建目录页（加时间戳刷新图片）
 # -----------------------------
 def build_symbol_directory(symbols):
     print("[push_to_notion] 🔁 Rebuilding Symbol Directory page...")
@@ -107,7 +105,8 @@ def build_symbol_directory(symbols):
         csv_path = f"docs/{code}/{code}_chipzones_hybrid.csv"
         img_path = f"docs/{code}/{code}_chipzones_hybrid.png"
         csv_url = f"{PAGES_BASE}/{code}/{code}_chipzones_hybrid.csv"
-        img_url = f"{PAGES_BASE}/{code}/{code}_chipzones_hybrid.png"
+        # 🔥 每次运行添加时间戳参数，强制刷新 Notion 缓存
+        img_url = f"{PAGES_BASE}/{code}/{code}_chipzones_hybrid.png?ver={int(time.time())}"
 
         children.append(safe_text_block(f"{code} Analysis"))
 
@@ -137,13 +136,12 @@ def build_symbol_directory(symbols):
     notion.blocks.children.append(directory_id, children=children)
     print(f"[push_to_notion] ✅ Directory rebuilt with {len(symbols)} symbols.")
 
-
 # -----------------------------
-# 上传数据
+# 上传 CSV 数据到数据库
 # -----------------------------
 def upsert_rows(code, csv_path):
     csv_url = f"{PAGES_BASE}/{code}/{code}_chipzones_hybrid.csv"
-    img_url = f"{PAGES_BASE}/{code}/{code}_chipzones_hybrid.png"
+    img_url = f"{PAGES_BASE}/{code}/{code}_chipzones_hybrid.png?ver={int(time.time())}"
 
     with open(csv_path, "r", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
@@ -162,7 +160,6 @@ def upsert_rows(code, csv_path):
             except APIResponseError as e:
                 print(f"[WARN] Failed row for {code}: {e}")
     print(f"[push_to_notion] ✅ Uploaded rows for {code}")
-
 
 # -----------------------------
 # 主入口
