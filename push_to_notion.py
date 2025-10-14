@@ -1,14 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-push_to_notion_v2.4_singleDB_auto_update_dirfix.py
+push_to_notion_v2.5_auto_clean_dir.py
 --------------------------------------------------
-版本说明：
-✅ 在 v2.4_singleDB_auto_update 基础上增强：
-1. 保留单数据库上传逻辑（不重复创建）
-2. 每次执行前自动清空目录页旧内容
-3. 图片 / CSV 链接添加时间戳防缓存
-4. 目录页保持 📘 Symbol Directory，不重复创建
-5. 全英文标题与链接文本（避免乱码）
+✅ 版本改进：
+1. 自动清除 Notion 目录中已删除的品种块
+2. 单数据库结构（不重复创建）
+3. 保留时间戳防缓存
+4. 保留 📘 Symbol Directory 页面（不重复创建）
+5. 全英文内容避免乱码
 
 环境变量：
 NOTION_TOKEN
@@ -60,15 +59,13 @@ def get_unique_directory_page(title, parent_id):
     # 未找到则创建
     page = notion.pages.create(
         parent={"page_id": parent_id},
-        properties={
-            "title": {"title": [{"type": "text", "text": {"content": title}}]}
-        },
+        properties={"title": {"title": [{"type": "text", "text": {"content": title}}]}},
     )
     print(f"[push_to_notion] 🆕 Created new directory page: {page['id']}")
     return page["id"]
 
 # ------------------------------
-# Step 1: 上传 CSV 数据到单一数据库
+# 上传 CSV 数据到单一数据库
 # ------------------------------
 
 def upsert_rows(symbol, png_url, csv_path):
@@ -91,31 +88,35 @@ def upsert_rows(symbol, png_url, csv_path):
         print(f"[push_to_notion] ✅ Uploaded {uploaded} rows for {symbol}")
 
 # ------------------------------
-# Step 2: 刷新目录页（核心增强部分）
+# 刷新目录页（v2.5 核心增强）
 # ------------------------------
 
 def refresh_directory_page(symbols):
-    """彻底清空旧目录块并重新添加最新图片和表格链接"""
+    """清理旧目录中已删除的品种，并更新图表与CSV"""
     dir_page = get_unique_directory_page("📘 Symbol Directory", NOTION_PARENT_PAGE)
 
-    # ---- ① 清空旧块 ----
-    print(f"[push_to_notion] 🧹 Clearing old directory blocks...")
-    cursor = None
-    while True:
-        resp = notion.blocks.children.list(block_id=dir_page, start_cursor=cursor) if cursor \
-               else notion.blocks.children.list(block_id=dir_page)
-        for b in resp.get("results", []):
-            try:
-                notion.blocks.update(block_id=b["id"], archived=True)
-            except Exception as e:
-                print(f"[WARN] Failed to archive block {b['id']}: {e}")
-        if not resp.get("has_more"):
-            break
-        cursor = resp.get("next_cursor")
-    print("[push_to_notion] ✅ Old blocks cleared")
+    # ---- ① 获取现有块 ----
+    resp = notion.blocks.children.list(block_id=dir_page)
+    existing_blocks = resp.get("results", [])
+    existing_symbols = []
 
-    # ---- ② 构建新块 ----
-    print(f"[push_to_notion] 🧩 Rebuilding directory content...")
+    for b in existing_blocks:
+        if b["type"] == "heading_2":
+            title = b["heading_2"]["rich_text"][0]["plain_text"]
+            symbol = title.split()[0]
+            existing_symbols.append(symbol)
+
+    # ---- ② 删除配置文件中不存在的品种 ----
+    removed = [s for s in existing_symbols if s not in symbols]
+    for b in existing_blocks:
+        if b["type"] == "heading_2":
+            title = b["heading_2"]["rich_text"][0]["plain_text"]
+            symbol = title.split()[0]
+            if symbol in removed:
+                print(f"[push_to_notion] 🧹 Removing outdated symbol: {symbol}")
+                notion.blocks.update(block_id=b["id"], archived=True)
+
+    # ---- ③ 构建最新内容 ----
     timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M")
     new_blocks = []
 
@@ -123,30 +124,32 @@ def refresh_directory_page(symbols):
         img_url = f"{PAGES_BASE}/{symbol}/{symbol}_chipzones_hybrid.png?v={timestamp}"
         csv_url = f"{PAGES_BASE}/{symbol}/{symbol}_chipzones_hybrid.csv?v={timestamp}"
 
-        new_blocks.append({
-            "object": "block",
-            "type": "heading_2",
-            "heading_2": {"rich_text": [{"type": "text", "text": {"content": f"{symbol} Analysis"}}]}
-        })
-        new_blocks.append({
-            "object": "block",
-            "type": "image",
-            "image": {"type": "external", "external": {"url": img_url}}
-        })
-        new_blocks.append({
-            "object": "block",
-            "type": "paragraph",
-            "paragraph": {"rich_text": [
-                {"type": "text", "text": {"content": "📊 View CSV Data", "link": {"url": csv_url}}}
-            ]}
-        })
+        new_blocks.extend([
+            {
+                "object": "block",
+                "type": "heading_2",
+                "heading_2": {"rich_text": [{"type": "text", "text": {"content": f"{symbol} Analysis"}}]},
+            },
+            {
+                "object": "block",
+                "type": "image",
+                "image": {"type": "external", "external": {"url": img_url}},
+            },
+            {
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {"rich_text": [
+                    {"type": "text", "text": {"content": "📊 View CSV Data", "link": {"url": csv_url}}}
+                ]},
+            },
+        ])
 
-    # ---- ③ 添加新块 ----
+    # ---- ④ 写入最新块 ----
     notion.blocks.children.append(block_id=dir_page, children=new_blocks)
     print("[push_to_notion] ✅ Directory page refreshed successfully.")
 
 # ------------------------------
-# Step 3: 主函数入口
+# 主函数
 # ------------------------------
 
 def main():
@@ -161,7 +164,6 @@ def main():
             continue
         upsert_rows(symbol, png_url, csv_path)
 
-    # 更新目录页
     refresh_directory_page(symbols)
 
 if __name__ == "__main__":
