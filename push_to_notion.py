@@ -70,8 +70,8 @@ def build_symbol_directory(symbols):
     for code in symbols:
         csv_path = f"docs/{code}/{code}_chipzones_hybrid.csv"
         img_path = f"docs/{code}/{code}_chipzones_hybrid.png"
-        csv_url = f"{PAGES_BASE}/docs/{code}/{code}_chipzones_hybrid.csv"
-        img_url = f"{PAGES_BASE}/docs/{code}/{code}_chipzones_hybrid.png"
+        csv_url = f"{PAGES_BASE}/{code}/{code}_chipzones_hybrid.csv"
+        img_url = f"{PAGES_BASE}/{code}/{code}_chipzones_hybrid.png"
 
         # 添加标题
         children.append(safe_text_block(f"{code} Analysis"))
