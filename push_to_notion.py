@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-push_to_notion_v2.3_auto_update_fixed.py
----------------------------------------
-✅ 支持 NOTION_PARENT_PAGE 传入页面URL、32位或36位ID
-✅ 单一数据库（仅初始化一次）
-✅ 每次运行清空旧记录再上传
+push_to_notion_v2.4_singleDB_auto_update.py
+------------------------------------------
+✅ 单一数据库（仅创建一次）
+✅ 自动清理旧记录再上传
 ✅ 自动更新「📘 品种浏览目录」页面（不重复创建）
-✅ 中文兼容、CSV表格嵌入展示
+✅ CSV表格嵌入前10行
+✅ 支持 URL / 32位 / 36位 Notion 页面ID
+✅ 中文兼容 & /docs 路径过滤
 """
 
 import os, re, csv
@@ -22,15 +23,12 @@ def normalize_notion_id(val: str) -> str:
     if not val:
         return ""
     val = val.strip()
-    # 从 URL 中提取 32位ID
     m = re.search(r'([0-9a-fA-F]{32})', val)
     if m:
         raw = m.group(1).lower()
         return f"{raw[0:8]}-{raw[8:12]}-{raw[12:16]}-{raw[16:20]}-{raw[20:32]}"
-    # 36位UUID
     if re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", val):
         return val.lower()
-    # 32位ID
     if re.fullmatch(r"[0-9a-fA-F]{32}", val):
         raw = val.lower()
         return f"{raw[0:8]}-{raw[8:12]}-{raw[12:16]}-{raw[16:20]}-{raw[20:32]}"
@@ -49,42 +47,63 @@ PAGES_BASE = os.getenv("PAGES_BASE", "").strip().rstrip("/").replace("/docs", ""
 
 print(f"[push_to_notion] Using parent page: {NOTION_PARENT_PAGE}")
 
-# 初始化 Notion 客户端
 notion = Client(auth=NOTION_TOKEN)
 
 
-# ========== 数据库 ==========
+# ========== 确保数据库只创建一次 ==========
 def ensure_database(fieldnames):
     global NOTION_DB
+
+    # ① 本地缓存
     if os.path.exists("notion_db_id.txt"):
         dbid = open("notion_db_id.txt").read().strip()
         if is_valid_uuid(dbid):
             NOTION_DB = dbid
-            print(f"[push_to_notion] ✅ Using existing database (local): {dbid}")
+            print(f"[push_to_notion] ✅ Using existing database (local cache): {dbid}")
             return dbid
+
+    # ② 环境变量
     if is_valid_uuid(NOTION_DB):
+        open("notion_db_id.txt", "w").write(NOTION_DB)
         print(f"[push_to_notion] ✅ Using NOTION_DB from env: {NOTION_DB}")
         return NOTION_DB
-    if not is_valid_uuid(NOTION_PARENT_PAGE):
-        raise ValueError("❌ NOTION_PARENT_PAGE 无效：请提供页面URL、32位或36位UUID")
 
-    print(f"[push_to_notion] ⚠️ No valid NOTION_DB found, creating new database...")
+    # ③ Notion 搜索是否已存在同名数据库
+    print("[push_to_notion] 🔍 Searching for existing database in Notion...")
+    try:
+        results = notion.search(
+            query="Futures Chip Analysis (Unified)",
+            filter={"property": "object", "value": "database"}
+        ).get("results", [])
+        for db in results:
+            if db.get("parent", {}).get("page_id") == NOTION_PARENT_PAGE:
+                NOTION_DB = db["id"]
+                open("notion_db_id.txt", "w").write(NOTION_DB)
+                print(f"[push_to_notion] ✅ Found existing database in Notion: {NOTION_DB}")
+                return NOTION_DB
+    except Exception as e:
+        print(f"[push_to_notion] ⚠️ Database search failed: {e}")
+
+    # ④ 若不存在，则新建
+    print(f"[push_to_notion] ⚙️ Creating new database under parent page {NOTION_PARENT_PAGE}...")
     props = {"Name": {"title": {}}, "Symbol": {"rich_text": {}}, "Image": {"url": {}}, "CSV": {"url": {}}}
     for f in fieldnames:
         if f not in props:
             props[f] = {"rich_text": {}}
+
     db = notion.databases.create(
         parent={"page_id": NOTION_PARENT_PAGE},
         title=[{"type": "text", "text": {"content": "Futures Chip Analysis (Unified)"}}],
         properties=props,
     )
     dbid = db["id"]
-    open("notion_db_id.txt", "w").write(dbid)
     NOTION_DB = dbid
-    print(f"[push_to_notion] ✅ Created database: {dbid}")
+    open("notion_db_id.txt", "w").write(dbid)
+    print(f"[push_to_notion] ✅ Created new database: {dbid}")
     return dbid
 
 
+# ========== 清空数据库 ==========
 def clear_database(dbid):
     try:
         total = 0
@@ -139,9 +158,7 @@ def get_or_create_directory_page(title, parent):
     results = notion.search(query=title, filter={"property": "object", "value": "page"}).get("results", [])
     for p in results:
         if p.get("parent", {}).get("page_id") == parent:
-            t = p.get("properties", {}).get("title", {}).get("title", [])
-            if t and t[0].get("plain_text") == title:
-                return p["id"]
+            return p["id"]
     page = notion.pages.create(parent={"page_id": parent},
                                properties={"title": [{"type": "text", "text": {"content": title}}]})
     return page["id"]
