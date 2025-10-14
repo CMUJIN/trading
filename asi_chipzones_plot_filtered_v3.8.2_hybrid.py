@@ -18,6 +18,9 @@ import matplotlib.pyplot as plt
 import matplotlib
 import os
 
+matplotlib.rcParams['font.sans-serif'] = ['SimHei', 'Arial Unicode MS', 'Heiti TC', 'PingFang SC']
+matplotlib.rcParams['axes.unicode_minus'] = False
+
 # 尝试使用 GitHub Actions 自带的 Noto 字体（或本地可用的中文字体）
 font_candidates = [
     "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
@@ -138,7 +141,7 @@ def plot_chart(df,zones,symbol):
     ax1.set_title(f"{symbol} 吸筹强度与筹码区分布 (v3.8.2 hybrid+)",fontsize=12)
     lines1,labels1=ax1.get_legend_handles_labels()
     lines2,labels2=ax1b.get_legend_handles_labels()
-    ax1.legend(lines1+lines2,labels1+labels2,loc='upper left',fontsize=9)
+    ax1.legend(lines1+lines2,labels1+labels2,loc='upper right',fontsize=9)
     ax2.bar(x,df['volume'],color='grey',alpha=0.35,label='成交量')
     ax2.plot(x,df['open_interest'],color='blue',lw=1.1,label='持仓量')
     ax2.legend(loc='upper right',fontsize=9)
