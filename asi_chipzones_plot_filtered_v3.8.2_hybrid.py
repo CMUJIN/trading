@@ -11,24 +11,43 @@ import os
 import argparse
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 # =============================
 # ✅ 解决中文乱码
 # =============================
+# ===== 中文字体设置（兼容 macOS / Windows / Linux） =====
 import matplotlib
-import os
+import matplotlib.pyplot as plt
+from matplotlib import font_manager
 
-matplotlib.rcParams['font.sans-serif'] = ['SimHei', 'Arial Unicode MS', 'Heiti TC', 'PingFang SC']
-matplotlib.rcParams['axes.unicode_minus'] = False
-
-# 尝试使用 GitHub Actions 自带的 Noto 字体（或本地可用的中文字体）
+# 优先使用系统可用字体（Arial Unicode MS 支持全语言字符）
 font_candidates = [
-    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.otf",
-    "/usr/share/fonts/truetype/arphic/ukai.ttc",
+    "/System/Library/Fonts/PingFang.ttc",
+    "/Library/Fonts/Arial Unicode.ttf",
     "/System/Library/Fonts/STHeiti Light.ttc",
-    "SimHei", "Microsoft YaHei", "PingFang SC"
+    "C:/Windows/Fonts/msyh.ttc",
+    "C:/Windows/Fonts/simhei.ttf",
+    "/usr/share/fonts/truetype/arphic/ukai.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
 ]
+
+for f in font_candidates:
+    if os.path.exists(f):
+        try:
+            font_manager.fontManager.addfont(f)
+        except Exception:
+            pass
+
+plt.rcParams["font.sans-serif"] = [
+    "Arial Unicode MS",  # ✅ 最兼容
+    "PingFang SC",
+    "Microsoft YaHei",
+    "SimHei",
+    "Heiti TC",
+    "Noto Sans CJK SC",
+    "Source Han Sans CN",
+]
+plt.rcParams["axes.unicode_minus"] = False
+
 
 font_path = None
 for f in font_candidates:
