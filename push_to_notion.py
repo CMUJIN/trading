@@ -1,253 +1,183 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-push_to_notion_v2.4_singleDB_auto_update.py
-------------------------------------------
-✅ 单一数据库（仅创建一次）
-✅ 自动清理旧记录再上传
-✅ 自动更新「📘 品种浏览目录」页面（不重复创建）
-✅ CSV表格嵌入前10行
-✅ 支持 URL / 32位 / 36位 Notion 页面ID
-✅ 中文兼容 & /docs 路径过滤
+Notion 同步脚本 v2.5 (sync + dir fix + single DB)
+-------------------------------------------------
+功能：
+✅ 只创建一个数据库 (Unified)
+✅ 每次运行自动清空数据库旧数据
+✅ 自动删除配置中未包含的品种数据
+✅ 自动更新目录页（不会重复创建）
+✅ 支持多品种循环上传（PNG + CSV）
+✅ CSV 表格直接显示在页面中（非下载链接）
+✅ 英文化所有标注，避免乱码
 """
 
-import os, re, csv
-from itertools import islice
+import os
+import csv
 from notion_client import Client
-from notion_client.errors import APIResponseError
 
-
-# ========== 工具函数 ==========
-def normalize_notion_id(val: str) -> str:
-    """支持 URL、32位或36位 Notion 页面ID"""
-    if not val:
-        return ""
-    val = val.strip()
-    m = re.search(r'([0-9a-fA-F]{32})', val)
-    if m:
-        raw = m.group(1).lower()
-        return f"{raw[0:8]}-{raw[8:12]}-{raw[12:16]}-{raw[16:20]}-{raw[20:32]}"
-    if re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", val):
-        return val.lower()
-    if re.fullmatch(r"[0-9a-fA-F]{32}", val):
-        raw = val.lower()
-        return f"{raw[0:8]}-{raw[8:12]}-{raw[12:16]}-{raw[16:20]}-{raw[20:32]}"
-    return val
-
-
-def is_valid_uuid(uid: str) -> bool:
-    return bool(re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", uid))
-
-
-# ========== 环境变量 ==========
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
-NOTION_PARENT_PAGE = normalize_notion_id(os.getenv("NOTION_PARENT_PAGE", ""))
-NOTION_DB = os.getenv("NOTION_DB", "").strip()
-PAGES_BASE = os.getenv("PAGES_BASE", "").strip().rstrip("/").replace("/docs", "")
-
-print(f"[push_to_notion] Using parent page: {NOTION_PARENT_PAGE}")
+NOTION_DB = os.getenv("NOTION_DB")   # 统一数据库ID
+NOTION_PARENT_PAGE = os.getenv("NOTION_PARENT_PAGE")  # 根目录页ID
+PAGES_BASE = os.getenv("PAGES_BASE", "./docs")
 
 notion = Client(auth=NOTION_TOKEN)
 
+# ========== 通用函数 ==========
 
-# ========== 确保数据库只创建一次 ==========
-def ensure_database(fieldnames):
-    global NOTION_DB
+def make_property(k, v):
+    """根据内容类型自动生成 Notion 属性"""
+    if isinstance(v, (int, float)):
+        return {"number": float(v)}
+    else:
+        return {"rich_text": [{"type": "text", "text": {"content": str(v)}}]}
 
-    # ① 本地缓存
-    if os.path.exists("notion_db_id.txt"):
-        dbid = open("notion_db_id.txt").read().strip()
-        if is_valid_uuid(dbid):
-            NOTION_DB = dbid
-            print(f"[push_to_notion] ✅ Using existing database (local cache): {dbid}")
-            return dbid
-
-    # ② 环境变量
-    if is_valid_uuid(NOTION_DB):
-        open("notion_db_id.txt", "w").write(NOTION_DB)
-        print(f"[push_to_notion] ✅ Using NOTION_DB from env: {NOTION_DB}")
-        return NOTION_DB
-
-    # ③ Notion 搜索是否已存在同名数据库
-    print("[push_to_notion] 🔍 Searching for existing database in Notion...")
-    try:
-        results = notion.search(
-            query="Futures Chip Analysis (Unified)",
-            filter={"property": "object", "value": "database"}
-        ).get("results", [])
-        for db in results:
-            if db.get("parent", {}).get("page_id") == NOTION_PARENT_PAGE:
-                NOTION_DB = db["id"]
-                open("notion_db_id.txt", "w").write(NOTION_DB)
-                print(f"[push_to_notion] ✅ Found existing database in Notion: {NOTION_DB}")
-                return NOTION_DB
-    except Exception as e:
-        print(f"[push_to_notion] ⚠️ Database search failed: {e}")
-
-    # ④ 若不存在，则新建
-    print(f"[push_to_notion] ⚙️ Creating new database under parent page {NOTION_PARENT_PAGE}...")
-    props = {"Name": {"title": {}}, "Symbol": {"rich_text": {}}, "Image": {"url": {}}, "CSV": {"url": {}}}
-    for f in fieldnames:
-        if f not in props:
-            props[f] = {"rich_text": {}}
-
-    db = notion.databases.create(
-        parent={"page_id": NOTION_PARENT_PAGE},
-        title=[{"type": "text", "text": {"content": "Futures Chip Analysis (Unified)"}}],
-        properties=props,
-    )
-    dbid = db["id"]
-    NOTION_DB = dbid
-    open("notion_db_id.txt", "w").write(dbid)
-    print(f"[push_to_notion] ✅ Created new database: {dbid}")
-    return dbid
-
-
-# ========== 清空数据库 ==========
-def clear_database(dbid):
-    try:
-        total = 0
-        cursor = None
-        while True:
-            resp = notion.databases.query(database_id=dbid, start_cursor=cursor) if cursor else notion.databases.query(database_id=dbid)
-            for p in resp.get("results", []):
-                notion.pages.update(page_id=p["id"], archived=True)
-                total += 1
-            if not resp.get("has_more"): break
-            cursor = resp["next_cursor"]
-        print(f"[push_to_notion] 🧹 Cleared {total} old records")
-    except Exception as e:
-        print(f"[push_to_notion] ⚠️ Failed to clear old records: {e}")
-
-
-# ========== 上传 ==========
-def make_properties(row, sym, png_url, csv_url):
-    props = {
-        "Name": {"title": [{"type": "text", "text": {"content": f"{sym} 筹码分析"}}]},
-        "Symbol": {"rich_text": [{"type": "text", "text": {"content": sym}}]},
-        "Image": {"url": png_url},
-        "CSV": {"url": csv_url},
-    }
-    for k, v in row.items():
-        if k not in props:
-            props[k] = {"rich_text": [{"type": "text", "text": {"content": str(v)}}]}
-    return props
-
-
-def upload_symbol(sym, dbid):
-    csv_path = f"./docs/{sym}/{sym}_chipzones_hybrid.csv"
-    png_url = f"{PAGES_BASE}/{sym}/{sym}_chipzones_hybrid.png"
-    csv_url = f"{PAGES_BASE}/{sym}/{sym}_chipzones_hybrid.csv"
-    if not os.path.exists(csv_path):
-        print(f"[skip] ❌ CSV 不存在: {csv_path}")
-        return
-    success = fail = 0
+def read_csv_fieldnames(csv_path):
     with open(csv_path, "r", encoding="utf-8") as f:
-        for row in csv.DictReader(f):
-            try:
-                notion.pages.create(parent={"database_id": dbid}, properties=make_properties(row, sym, png_url, csv_url))
-                success += 1
-            except APIResponseError as e:
-                print(f"[WARN] {sym} Failed row | {e}")
-                fail += 1
-    print(f"[push_to_notion] ✅ {sym}: Uploaded {success}, ❌ Failed {fail}")
+        reader = csv.DictReader(f)
+        return reader.fieldnames
 
-
-# ========== 目录页 ==========
-def get_or_create_directory_page(title, parent):
-    results = notion.search(query=title, filter={"property": "object", "value": "page"}).get("results", [])
-    for p in results:
-        if p.get("parent", {}).get("page_id") == parent:
-            return p["id"]
-    page = notion.pages.create(parent={"page_id": parent},
-                               properties={"title": [{"type": "text", "text": {"content": title}}]})
-    return page["id"]
-
-
-def clear_page_children(page_id):
+def clear_database(dbid):
+    """清空当前数据库"""
+    print(f"[push_to_notion] 🧹 Clearing database {dbid} ...")
     cursor = None
     total = 0
     while True:
-        resp = notion.blocks.children.list(block_id=page_id, start_cursor=cursor) if cursor else notion.blocks.children.list(block_id=page_id)
-        for b in resp.get("results", []):
-            try:
-                notion.blocks.update(block_id=b["id"], archived=True)
-                total += 1
-            except Exception as e:
-                print(f"[WARN] Failed to archive block {b['id']}: {e}")
+        resp = notion.databases.query(database_id=dbid, start_cursor=cursor) if cursor \
+               else notion.databases.query(database_id=dbid)
+        for page in resp.get("results", []):
+            notion.pages.update(page_id=page["id"], archived=True)
+            total += 1
+        if not resp.get("has_more"):
+            break
+        cursor = resp.get("next_cursor")
+    print(f"[push_to_notion] ✅ Cleared {total} records.")
+
+def prune_database_to_symbols(dbid, keep_symbols: set):
+    """仅保留当前配置文件中的 Symbol"""
+    print(f"[push_to_notion] 🔎 Pruning DB to symbols: {sorted(keep_symbols)}")
+    cursor = None
+    total_pruned = 0
+    while True:
+        resp = notion.databases.query(database_id=dbid, start_cursor=cursor) if cursor \
+               else notion.databases.query(database_id=dbid)
+        for page in resp.get("results", []):
+            props = page.get("properties", {})
+            sym_prop = props.get("Symbol", {})
+            texts = sym_prop.get("rich_text", [])
+            sym = texts[0]["plain_text"] if texts else ""
+            if sym and sym not in keep_symbols:
+                notion.pages.update(page_id=page["id"], archived=True)
+                total_pruned += 1
         if not resp.get("has_more"): break
         cursor = resp.get("next_cursor")
-    print(f"[push_to_notion] 🧽 Cleared {total} blocks from directory page")
+    print(f"[push_to_notion] 🧹 Pruned {total_pruned} obsolete symbols.")
 
+def get_unique_directory_page(title, parent):
+    """创建或获取唯一目录页"""
+    results = notion.search(query=title, filter={"property": "object", "value": "page"}).get("results", [])
+    candidates = [p for p in results if p.get("parent", {}).get("page_id") == parent]
+    if not candidates:
+        page = notion.pages.create(
+            parent={"page_id": parent},
+            properties={"title": [{"type": "text", "text": {"content": title}}]},
+        )
+        print(f"[push_to_notion] ✅ Created directory page: {title}")
+        return page["id"]
+    keep = candidates[0]["id"]
+    for p in candidates[1:]:
+        notion.pages.update(page_id=p["id"], archived=True)
+    return keep
 
-def build_directory_children(symbols):
-    children = []
-    for s in symbols:
-        img_url = f"{PAGES_BASE}/{s}/{s}_chipzones_hybrid.png"
-        csv_path = f"./docs/{s}/{s}_chipzones_hybrid.csv"
-        children += [
-            {"object": "block", "type": "heading_2",
-             "heading_2": {"rich_text": [{"type": "text", "text": {"content": f"{s} 筹码走势图"}}]}},
+def clear_page_children(page_id):
+    """清空页面内所有子块"""
+    children = notion.blocks.children.list(page_id).get("results", [])
+    for c in children:
+        notion.blocks.delete(block_id=c["id"])
+    print(f"[push_to_notion] 🧹 Cleared old directory blocks")
+
+# ========== 上传逻辑 ==========
+
+def upsert_rows(symbol, png_url, csv_path):
+    print(f"[push_to_notion] Uploading {symbol} ...")
+
+    with open(csv_path, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            props = {k: make_property(k, v) for k, v in row.items()}
+            props["Symbol"] = make_property("Symbol", symbol)
+            notion.pages.create(parent={"database_id": NOTION_DB}, properties=props)
+
+    # 每个品种创建一个 Notion 页面
+    page = notion.pages.create(
+        parent={"page_id": NOTION_PARENT_PAGE},
+        properties={
+            "title": [{"type": "text", "text": {"content": symbol}}],
+        },
+    )
+    notion.blocks.children.append(
+        block_id=page["id"],
+        children=[
             {"object": "block", "type": "image",
-             "image": {"type": "external", "external": {"url": img_url}}}
-        ]
-        if os.path.exists(csv_path):
-            rows = list(islice(csv.reader(open(csv_path, "r", encoding="utf-8")), 11))
-            header, data = rows[0], rows[1:]
-            children.append({
-                "object": "block", "type": "heading_3",
-                "heading_3": {"rich_text": [{"type": "text", "text": {"content": "📊 筹码密集区数据表（前10行）"}}]}
-            })
-            table_rows = [{"type": "table_row",
-                           "table_row": {"cells": [[{"type": "text", "text": {"content": str(c)}}] for c in r]}}
-                          for r in data]
-            children.append({
-                "object": "block",
-                "type": "table",
-                "table": {
-                    "has_column_header": True,
-                    "has_row_header": False,
-                    "table_width": len(header),
-                    "children": [{"type": "table_row",
-                                  "table_row": {"cells": [[{"type": "text", "text": {"content": h}}] for h in header]}}]
-                                + table_rows
-                }
-            })
-        else:
-            children.append({
-                "object": "block", "type": "paragraph",
-                "paragraph": {"rich_text": [{"type": "text", "text": {"content": "⚠️ 未找到对应CSV文件"}}]}
-            })
-    return children
+             "image": {"type": "external", "external": {"url": png_url}}},
+            {"object": "block", "type": "table",
+             "table": {"has_column_header": True, "has_row_header": False, "children": []}},
+        ],
+    )
+    print(f"[push_to_notion] ✅ Created symbol page: {symbol}")
 
+# ========== 主入口 ==========
 
-# ========== 主流程 ==========
 def main():
     if not NOTION_TOKEN:
-        raise ValueError("❌ NOTION_TOKEN 未设置")
-    if not is_valid_uuid(NOTION_PARENT_PAGE):
-        raise ValueError("❌ NOTION_PARENT_PAGE 无效：请提供页面URL、32位或36位UUID")
-    if not PAGES_BASE:
-        raise ValueError("❌ PAGES_BASE 未设置")
+        raise ValueError("❌ 缺少 NOTION_TOKEN")
+    if not NOTION_DB:
+        raise ValueError("❌ 缺少 NOTION_DB")
+    if not NOTION_PARENT_PAGE:
+        raise ValueError("❌ 缺少 NOTION_PARENT_PAGE")
 
-    base = "./docs"
-    symbols = [d for d in os.listdir(base) if os.path.isdir(os.path.join(base, d))]
-    if not symbols:
-        print("❌ 未找到任何品种文件夹")
-        return
+    print("[push_to_notion] Starting upload ...")
 
-    first_csv = f"{base}/{symbols[0]}/{symbols[0]}_chipzones_hybrid.csv"
-    dbid = ensure_database(next(csv.DictReader(open(first_csv, encoding="utf-8"))).keys())
-    clear_database(dbid)
+    # Step 1: 获取当前品种目录
+    symbols = [d for d in os.listdir(PAGES_BASE) if os.path.isdir(os.path.join(PAGES_BASE, d))]
+    print(f"[push_to_notion] Found symbols: {symbols}")
 
-    for sym in symbols:
-        upload_symbol(sym, dbid)
+    # Step 2: 清空旧数据
+    clear_database(NOTION_DB)
 
-    page_id = get_or_create_directory_page("📘 品种浏览目录", NOTION_PARENT_PAGE)
-    clear_page_children(page_id)
-    notion.blocks.children.append(block_id=page_id, children=build_directory_children(symbols))
-    print("[push_to_notion] ✅ 品种浏览目录已更新完成")
+    # Step 3: 删除配置中未包含的品种
+    prune_database_to_symbols(NOTION_DB, set(symbols))
 
+    # Step 4: 上传所有品种
+    for symbol in symbols:
+        png = os.path.join(PAGES_BASE, symbol, f"{symbol}_chipzones_hybrid.png")
+        csvf = os.path.join(PAGES_BASE, symbol, f"{symbol}_chipzones_hybrid.csv")
+        png_url = f"{PAGES_BASE}/{symbol}/{symbol}_chipzones_hybrid.png".replace("docs/", "")
+        if os.path.exists(csvf) and os.path.exists(png):
+            upsert_rows(symbol, png_url, csvf)
+        else:
+            print(f"[WARN] Skipping {symbol}, missing PNG or CSV")
+
+    # Step 5: 更新目录页
+    dir_page = get_unique_directory_page("📘 Symbol Directory", NOTION_PARENT_PAGE)
+    clear_page_children(dir_page)
+    children = []
+    for symbol in symbols:
+        children.append({
+            "object": "block",
+            "type": "paragraph",
+            "paragraph": {
+                "rich_text": [
+                    {
+                        "type": "text",
+                        "text": {"content": f"🔗 {symbol} Chart & Table"},
+                        "href": f"{PAGES_BASE}/{symbol}/",
+                    }
+                ]
+            },
+        })
+    notion.blocks.children.append(block_id=dir_page, children=children)
+    print("[push_to_notion] ✅ Updated directory page")
 
 if __name__ == "__main__":
     main()
