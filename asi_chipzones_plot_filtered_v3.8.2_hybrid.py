@@ -137,10 +137,10 @@ def estimate_chipzones(df, window_zone=60, bins_pct=0.5, beta=0.7, half_life=10,
 def plot_chart(df,zones,symbol):
     x=np.arange(len(df))
     fig,(ax1,ax2)=plt.subplots(2,1,figsize=(14,8),sharex=True,gridspec_kw={'height_ratios':[2,1]})
-    ax1.plot(x,df['close'],color='black',lw=1.2,label='价格')
+    ax1.plot(x,df['close'],color='black',lw=1.2,label='price')
     ax1b=ax1.twinx()
-    ax1b.plot(x,df['long_strength'],color='red',lw=1.0,label='多头吸筹强度(右)')
-    ax1b.plot(x,df['short_strength'],color='green',lw=1.0,label='空头吸筹强度(右)')
+    ax1b.plot(x,df['long_strength'],color='red',lw=1.0,label='long')
+    ax1b.plot(x,df['short_strength'],color='green',lw=1.0,label='short')
     ax1b.set_ylim(0,1)
     for _,r in zones.iterrows():
         color='#FF8A33' if r['zone_type']=='短期区' else '#CC5522'
@@ -154,16 +154,26 @@ def plot_chart(df,zones,symbol):
             key=round(mid,-1)
             offsets[key]=offsets.get(key,0)+1
             dy=(offsets[key]-1)*0.0
-            txt=f"{int(round(r['low']))}-{int(round(r['high']))} 强度:{r['avg_strength']:.1f}"
-            color='#C24E1A' if r['zone_type']=='持久区' else '#B35A00'
+            txt=f"{int(round(r['low']))}-{int(round(r['high']))} strength:{r['avg_strength']:.1f}"
+            color='#C24E1A' if r['zone_type']=='persistent_zone' else '#B35A00'
             ax1.text(xmin,mid+dy,txt,fontsize=8,color=color,va='center',ha='left')
-    ax1.set_title(f"{symbol} 吸筹强度与筹码区分布 (v3.8.2 hybrid+)",fontsize=12)
+    ax1.set_title(f"{symbol} chip_analysis (v3.8.2 hybrid+)",fontsize=12)
     lines1,labels1=ax1.get_legend_handles_labels()
     lines2,labels2=ax1b.get_legend_handles_labels()
     ax1.legend(lines1+lines2,labels1+labels2,loc='upper right',fontsize=9)
-    ax2.bar(x,df['volume'],color='grey',alpha=0.35,label='成交量')
-    ax2.plot(x,df['open_interest'],color='blue',lw=1.1,label='持仓量')
+    # 副图：成交量 + 持仓量
+    ax2.bar(df.index, df["volume"], color="gray", label="volume")
+    ax2.plot(df.index, df["open_interest"], color="blue", label="OI")
     ax2.legend(loc='upper right',fontsize=9)
+
+    # ✅ 自动调整持仓量y轴下限
+    oi_min = df["open_interest"].min()
+    oi_max = df["open_interest"].max()
+    margin = (oi_max - oi_min) * 0.05  # 上下各5%缓冲
+    ax2.set_ylim(oi_min - margin, oi_max + margin)
+    ax2.set_ylabel("OI")
+
+    
     if 'datetime' in df.columns:
         step=max(1,len(df)//10)
         ax2.set_xticks(x[::step])
