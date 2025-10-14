@@ -1,6 +1,9 @@
 symbols:
   - code: JM2601
     start: 2025-09-03
+  - code: M2601
+    start: 2025-09-03
+
 freq: "60m"
 analysis:
   window_strength: 5
