@@ -5,11 +5,11 @@ symbols:
     start: 2025-09-03
 freq: "60m"
 analysis:
-  window_strength: 20
+  window_strength: 5
   window_zone: 60
   bins_pct: 0.5
   beta: 0.7
-  half_life: 10
+  half_life: 1000000000
   quantile: 0.8
 out_dir: "./data"
 timezone: "Asia/Shanghai"
