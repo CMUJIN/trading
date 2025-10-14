@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-push_to_notion_v2.7_auto_config_flexible.py
-----------------------------------
-✅ 自动读取 config.yaml，兼容两种格式
-✅ 自动清空并重建目录页（防止重复）
-✅ 自动过滤缺失 CSV / PNG
-✅ 修复 Invalid image url 问题
+push_to_notion_v2.8_auto_config_fix_symbols.py
+✅ 修复 symbols 为 dict 导致的路径错误
+✅ 修复 Invalid image url
+✅ 自动清空目录
+✅ 自动读取 config.yaml 并兼容两种结构
 """
 
 import os
@@ -51,9 +50,7 @@ def build_symbol_directory(symbols):
     clear_directory(directory_id)
     children = []
 
-    for sym in symbols:
-        # ✅ 支持 dict / str 两种结构
-        code = sym["code"] if isinstance(sym, dict) else sym
+    for code in symbols:
         csv_path = f"docs/{code}/{code}_chipzones_hybrid.csv"
         img_path = f"docs/{code}/{code}_chipzones_hybrid.png"
         csv_url = f"{PAGES_BASE}/docs/{code}/{code}_chipzones_hybrid.csv"
@@ -87,8 +84,7 @@ def build_symbol_directory(symbols):
     print(f"[push_to_notion] ✅ Directory rebuilt with {len(symbols)} symbols.")
 
 
-def upsert_rows(symbol, csv_path):
-    code = symbol["code"] if isinstance(symbol, dict) else symbol
+def upsert_rows(code, csv_path):
     csv_url = f"{PAGES_BASE}/docs/{code}/{code}_chipzones_hybrid.csv"
     img_url = f"{PAGES_BASE}/docs/{code}/{code}_chipzones_hybrid.png"
 
@@ -96,7 +92,7 @@ def upsert_rows(symbol, csv_path):
         reader = csv.DictReader(f)
         for row in reader:
             props = {
-                "Name": {"title": [{"text": {"content": f"{code} 筹码分析"}}]},
+                "Name": {"title": [{"text": {"content": f"{code} Analysis"}}]},
                 "CSV": {"url": csv_url},
                 "Image": {"url": img_url},
             }
@@ -111,14 +107,23 @@ def upsert_rows(symbol, csv_path):
 def main():
     with open("config.yaml", "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
-    symbols = config.get("symbols", [])
+
+    raw_symbols = config.get("symbols", [])
+
+    # ✅ 统一转换为纯字符串列表
+    symbols = []
+    for s in raw_symbols:
+        if isinstance(s, dict) and "code" in s:
+            symbols.append(s["code"])
+        elif isinstance(s, str):
+            symbols.append(s)
+
     print(f"[push_to_notion] Starting upload for symbols: {symbols}")
 
-    for sym in symbols:
-        code = sym["code"] if isinstance(sym, dict) else sym
+    for code in symbols:
         csv_path = f"docs/{code}/{code}_chipzones_hybrid.csv"
         if os.path.exists(csv_path):
-            upsert_rows(sym, csv_path)
+            upsert_rows(code, csv_path)
         else:
             print(f"[WARN] CSV not found for {code}: {csv_path}")
 
