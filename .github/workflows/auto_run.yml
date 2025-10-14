@@ -1,47 +1,43 @@
-name: Update Futures Dashboard (Batch)
+name: Auto Futures Chip Analysis
 
 on:
-  workflow_dispatch:
   schedule:
-    - cron: "0 */6 * * *"
+    - cron: "0 8 * * *"   # 北京时间 16:00
+    - cron: "0 18 * * *"  # 北京时间 02:00
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
-  build:
+  run:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.10"
-
-      - name: Install dependencies
-        run: |
-          pip install pandas matplotlib notion-client openpyxl
-
-      - name: Run Batch Analysis
-        env:
-          SYMBOLS: JM2601,M2601,RB2601
-        run: |
-          python asi_chipzones_batch_v4.0_EN.py
-
-      - name: Commit Updated Results
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      - run: |
+          python run_pipeline.py --config config.yaml
+      - name: Commit docs for GitHub Pages
         run: |
           git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-          git add -A
-          if ! git diff --cached --quiet; then
-            git commit -m "Auto update analysis results (batch)"
-            git push
-          fi
-
-      - name: Push to Notion
+          git config user.email "actions@github.com"
+          git add docs || true
+          git commit -m "Auto update analysis results" || true
+          git push || true
+      - name: Push links to Notion (optional)
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_DB: ${{ secrets.NOTION_DB }}
           NOTION_PARENT_PAGE: ${{ secrets.NOTION_PARENT_PAGE }}
+          PAGES_BASE: ${{ secrets.PAGES_BASE }}
         run: |
-          python push_to_notion_v2.5_sync_and_dirfix.py
+          if [ -n "${NOTION_TOKEN}" ] && [ -n "${PAGES_BASE}" ]; then
+            python push_to_notion.py
+          else
+            echo "Skip Notion push (missing NOTION_TOKEN or PAGES_BASE)"
+          fi
