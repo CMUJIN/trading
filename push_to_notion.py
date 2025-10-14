@@ -1,18 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-push_to_notion_v1.8_autocreate.py
------------------------------------
+push_to_notion_v1.9_multi_autocreate.py
+---------------------------------------
 功能：
-✅ 自动检测 Notion 数据库 ID 是否有效
-✅ 若无效自动重新创建数据库
-✅ 每次执行前清空旧数据
-✅ 统一文本字段防报错
-✅ 自动过滤 GitHub Pages /docs 路径
-✅ 从本地 docs 读取 CSV 上传 Notion（网页URL存储）
-
-依赖：
-pip install notion-client
+✅ 自动检测数据库ID是否有效，无效则创建
+✅ 清空旧数据再上传
+✅ 多品种批量上传（扫描 ./docs 下所有品种）
+✅ 自动保存 notion_db_id.txt
+✅ 全字段文本兼容
 """
 
 import os
@@ -26,7 +22,7 @@ NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 NOTION_PARENT_PAGE = os.getenv("NOTION_PARENT_PAGE")
 NOTION_DB = os.getenv("NOTION_DB", "").strip()
 PAGES_BASE = os.getenv("PAGES_BASE", "").strip().rstrip("/")
-PAGES_BASE = PAGES_BASE.replace("/docs", "")  # ✅ 自动移除多余 /docs
+PAGES_BASE = PAGES_BASE.replace("/docs", "")  # ✅ 自动去掉 /docs
 
 # 初始化 Notion 客户端
 notion = Client(auth=NOTION_TOKEN)
@@ -43,7 +39,7 @@ def ensure_database(fieldnames):
     """确保数据库存在，不重复创建"""
     global NOTION_DB
 
-    # ✅ 优先使用本地记录文件
+    # ✅ 优先使用本地缓存
     if os.path.exists("notion_db_id.txt"):
         with open("notion_db_id.txt", "r") as f:
             dbid = f.read().strip()
@@ -52,7 +48,7 @@ def ensure_database(fieldnames):
                 NOTION_DB = dbid
                 return dbid
 
-    # ✅ 若环境变量中有值且合法
+    # ✅ 检查环境变量
     if is_valid_uuid(NOTION_DB):
         print(f"[push_to_notion] ✅ Using NOTION_DB from env: {NOTION_DB}")
         return NOTION_DB
@@ -141,22 +137,32 @@ def make_properties(row, symbol, png_url, csv_url):
 
 # ========== 主入口 ==========
 def main():
-    symbol = os.getenv("SYMBOL", "JM2601")
+    base_dir = "./docs"
 
-    # ✅ 本地文件路径
-    local_csv = f"./docs/{symbol}/{symbol}_chipzones_hybrid.csv"
-    local_png = f"./docs/{symbol}/{symbol}_chipzones_hybrid.png"
+    # 自动扫描所有品种目录
+    symbols = [
+        d for d in os.listdir(base_dir)
+        if os.path.isdir(os.path.join(base_dir, d))
+    ]
 
-    # ✅ Notion 网页链接
-    csv_url = f"{PAGES_BASE}/{symbol}/{symbol}_chipzones_hybrid.csv"
-    png_url = f"{PAGES_BASE}/{symbol}/{symbol}_chipzones_hybrid.png"
+    if not symbols:
+        print(f"❌ 未找到任何品种目录，请确认 docs/ 下存在合约文件夹")
+        return
 
-    print(f"[push_to_notion] Starting upload for {symbol}...")
+    for symbol in symbols:
+        local_csv = f"{base_dir}/{symbol}/{symbol}_chipzones_hybrid.csv"
+        local_png = f"{base_dir}/{symbol}/{symbol}_chipzones_hybrid.png"
 
-    if not os.path.exists(local_csv):
-        raise FileNotFoundError(f"❌ 本地CSV文件不存在：{local_csv}")
+        # ✅ Notion 网页链接
+        csv_url = f"{PAGES_BASE}/{symbol}/{symbol}_chipzones_hybrid.csv"
+        png_url = f"{PAGES_BASE}/{symbol}/{symbol}_chipzones_hybrid.png"
 
-    upsert_rows(symbol, png_url, local_csv, csv_url)
+        if not os.path.exists(local_csv):
+            print(f"[skip] ❌ 没有找到CSV文件: {local_csv}")
+            continue
+
+        print(f"\n[push_to_notion] 🚀 开始上传 {symbol} ...")
+        upsert_rows(symbol, png_url, local_csv, csv_url)
 
 
 if __name__ == "__main__":
