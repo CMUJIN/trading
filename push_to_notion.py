@@ -1,20 +1,23 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-push_to_notion_v2.0_single_db.py
+push_to_notion_v2.1_dashboard_embed.py
 ---------------------------------------
 功能：
-✅ 程序启动时仅创建一个数据库
-✅ 所有品种写入同一个数据库
-✅ 每次执行清空旧记录再上传
-✅ 全字段文本兼容
-✅ 自动过滤 /docs 路径
-✅ 支持批量扫描 docs 下所有品种
+✅ 自动检测 Notion 数据库是否有效，否则自动创建
+✅ 每次运行清空数据库旧记录再上传
+✅ 支持多品种自动遍历 ./docs 下所有合约
+✅ 每个品种上传图表与数据（全字段文本化）
+✅ 自动生成 Notion 浏览页面，直接展示：
+    - 图表 (PNG)
+    - CSV 前10行表格（非下载链接）
+✅ 所有数据写入同一个数据库中
 """
 
 import os
 import csv
 import re
+from itertools import islice
 from notion_client import Client
 from notion_client.errors import APIResponseError
 
@@ -80,7 +83,7 @@ def ensure_database(fieldnames):
     NOTION_DB = dbid
     with open("notion_db_id.txt", "w") as f:
         f.write(dbid)
-    print(f"[push_to_notion] ✅ Created new unified database: {dbid}")
+    print(f"[push_to_notion] ✅ Created new database: {dbid}")
     return dbid
 
 
@@ -97,17 +100,9 @@ def clear_database(dbid):
 
 
 # ========== 上传数据 ==========
-def upload_symbol(symbol, dbid):
-    """上传单个品种数据"""
-    local_csv = f"./docs/{symbol}/{symbol}_chipzones_hybrid.csv"
-    local_png = f"./docs/{symbol}/{symbol}_chipzones_hybrid.png"
-
-    if not os.path.exists(local_csv):
-        print(f"[skip] ❌ 没有找到CSV文件: {local_csv}")
-        return 0, 0
-
-    csv_url = f"{PAGES_BASE}/{symbol}/{symbol}_chipzones_hybrid.csv"
-    png_url = f"{PAGES_BASE}/{symbol}/{symbol}_chipzones_hybrid.png"
+def upsert_rows(symbol, png_url, local_csv, csv_url):
+    dbid = ensure_database(read_csv_fieldnames(local_csv))
+    clear_database(dbid)
 
     with open(local_csv, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
@@ -118,15 +113,20 @@ def upload_symbol(symbol, dbid):
                 notion.pages.create(parent={"database_id": dbid}, properties=props)
                 success += 1
             except APIResponseError as e:
-                print(f"[WARN] Failed row in {symbol}: {e}")
+                print(f"[WARN] Failed row: ? | {e}")
                 fail += 1
 
-        print(f"[push_to_notion] ✅ {symbol}: Uploaded {success} rows, ❌ Failed {fail}")
-        return success, fail
+        print(f"[push_to_notion] ✅ Uploaded {success} rows, ❌ Failed {fail}")
 
 
+def read_csv_fieldnames(local_csv):
+    with open(local_csv, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        return reader.fieldnames
+
+
+# ========== 属性构造 ==========
 def make_properties(row, symbol, png_url, csv_url):
-    """构造 Notion 属性"""
     props = {
         "Name": {"title": [{"type": "text", "text": {"content": f"{symbol} 筹码分析"}}]},
         "Symbol": {"rich_text": [{"type": "text", "text": {"content": symbol}}]},
@@ -139,34 +139,97 @@ def make_properties(row, symbol, png_url, csv_url):
     return props
 
 
+# ========== 创建浏览页面 ==========
+def create_or_update_index(symbols):
+    dashboard_page_id = NOTION_PARENT_PAGE  # 直接放在主 dashboard 下
+    print(f"[push_to_notion] 🧭 Generating Notion browsing page under {dashboard_page_id} ...")
+
+    children_blocks = []
+    for s in symbols:
+        img_url = f"{PAGES_BASE}/{s}/{s}_chipzones_hybrid.png"
+        csv_path = f"./docs/{s}/{s}_chipzones_hybrid.csv"
+
+        # 1️⃣ 标题与图片
+        children_blocks.append({
+            "object": "block",
+            "type": "heading_2",
+            "heading_2": {"rich_text": [{"type": "text", "text": {"content": f"{s} 筹码走势图"}}]}
+        })
+        children_blocks.append({
+            "object": "block",
+            "type": "image",
+            "image": {"type": "external", "external": {"url": img_url}}
+        })
+
+        # 2️⃣ 表格内容
+        if os.path.exists(csv_path):
+            rows = list(islice(csv.reader(open(csv_path, "r", encoding="utf-8")), 11))  # 前10行
+            header, data = rows[0], rows[1:]
+            table_rows = []
+
+            for row in data:
+                table_rows.append({
+                    "type": "table_row",
+                    "table_row": {"cells": [[{"type": "text", "text": {"content": str(cell)}}] for cell in row]}
+                })
+
+            children_blocks.append({
+                "object": "block",
+                "type": "heading_3",
+                "heading_3": {"rich_text": [{"type": "text", "text": {"content": "📊 筹码密集区数据表（前10行）"}}]}
+            })
+            children_blocks.append({
+                "object": "block",
+                "type": "table",
+                "table": {
+                    "has_column_header": True,
+                    "has_row_header": False,
+                    "table_width": len(header),
+                    "children": [
+                        {"type": "table_row",
+                         "table_row": {"cells": [[{"type": "text", "text": {"content": h}}] for h in header]}},
+                        *table_rows
+                    ]
+                }
+            })
+        else:
+            children_blocks.append({
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {"rich_text": [{"type": "text", "text": {"content": "⚠️ 未找到对应CSV文件"}}]}
+            })
+
+    # ✅ 生成目录页
+    notion.pages.create(
+        parent={"page_id": dashboard_page_id},
+        properties={"title": [{"type": "text", "text": {"content": "📘 品种浏览目录"}}]},
+        children=children_blocks
+    )
+    print(f"[push_to_notion] ✅ 品种浏览目录已生成！")
+
+
 # ========== 主入口 ==========
 def main():
     base_dir = "./docs"
     symbols = [d for d in os.listdir(base_dir) if os.path.isdir(os.path.join(base_dir, d))]
-
     if not symbols:
-        print("❌ 未找到任何品种目录，请确认 docs/ 下存在合约文件夹")
+        print(f"❌ 未找到任何品种目录，请确认 docs/ 下存在合约文件夹")
         return
 
-    # 用第一个 CSV 的字段结构创建一次数据库
-    first_csv = f"{base_dir}/{symbols[0]}/{symbols[0]}_chipzones_hybrid.csv"
-    if not os.path.exists(first_csv):
-        print(f"❌ 找不到初始 CSV 文件: {first_csv}")
-        return
-    with open(first_csv, "r", encoding="utf-8") as f:
-        fieldnames = csv.DictReader(f).fieldnames
-
-    dbid = ensure_database(fieldnames)
-    clear_database(dbid)
-
-    total_success, total_fail = 0, 0
     for symbol in symbols:
-        print(f"\n[push_to_notion] 🚀 开始上传 {symbol} ...")
-        s, f_ = upload_symbol(symbol, dbid)
-        total_success += s
-        total_fail += f_
+        local_csv = f"{base_dir}/{symbol}/{symbol}_chipzones_hybrid.csv"
+        local_png = f"{base_dir}/{symbol}/{symbol}_chipzones_hybrid.png"
+        csv_url = f"{PAGES_BASE}/{symbol}/{symbol}_chipzones_hybrid.csv"
+        png_url = f"{PAGES_BASE}/{symbol}/{symbol}_chipzones_hybrid.png"
 
-    print(f"\n✅ 全部完成，共上传 {total_success} 条，失败 {total_fail} 条。数据库ID: {dbid}")
+        if not os.path.exists(local_csv):
+            print(f"[skip] ❌ 没有找到CSV文件: {local_csv}")
+            continue
+
+        print(f"\n[push_to_notion] 🚀 开始上传 {symbol} ...")
+        upsert_rows(symbol, png_url, local_csv, csv_url)
+
+    create_or_update_index(symbols)
 
 
 if __name__ == "__main__":
