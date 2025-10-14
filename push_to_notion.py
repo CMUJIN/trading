@@ -107,8 +107,8 @@ def build_symbol_directory(symbols):
 
 def upsert_rows(code, csv_path):
     """上传 CSV 行数据到 Notion 数据库"""
-    csv_url = f"{PAGES_BASE}/docs/{code}/{code}_chipzones_hybrid.csv"
-    img_url = f"{PAGES_BASE}/docs/{code}/{code}_chipzones_hybrid.png"
+    csv_url = f"{PAGES_BASE}/{code}/{code}_chipzones_hybrid.csv"
+    img_url = f"{PAGES_BASE}/{code}/{code}_chipzones_hybrid.png"
 
     with open(csv_path, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
