@@ -1,103 +1,143 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import os, sys, glob, csv, datetime as dt
+"""
+push_to_notion.py
+----------------------------------------
+自动上传分析结果 (CSV + PNG 链接) 到 Notion 数据库
+支持：
+- 自动创建数据库（字段类型自动匹配）
+- 自动类型识别（数字/文本）
+- 兼容 GitHub Actions 环境
+----------------------------------------
+依赖: pip install notion-client pyyaml
+"""
+
+import os
+import csv
+import traceback
 from notion_client import Client
 
-TOKEN = os.environ.get("NOTION_TOKEN")
-DB_ID = os.environ.get("NOTION_DB", "").strip()
-PARENT = os.environ.get("NOTION_PARENT_PAGE", "").strip()
-# 如果 DB_ID 是占位符，则清空
-if DB_ID.lower().startswith("placeholder") or DB_ID == "None":
-    DB_ID = ""
+# 从环境变量读取配置
+NOTION_TOKEN = os.getenv("NOTION_TOKEN")
+NOTION_DB = os.getenv("NOTION_DB", "").strip()
+NOTION_PARENT_PAGE = os.getenv("NOTION_PARENT_PAGE", "").strip()
+PAGES_BASE = os.getenv("PAGES_BASE", "").rstrip("/")
 
-PAGES_BASE = os.environ.get("PAGES_BASE", "").strip()
+# 初始化 Notion 客户端
+notion = Client(auth=NOTION_TOKEN)
 
-if not TOKEN:
-    print("[push_to_notion] NOTION_TOKEN is required.", file=sys.stderr)
-    sys.exit(2)
 
-notion = Client(auth=TOKEN)
+# =============================
+# 创建数据库
+# =============================
+def ensure_database(fieldnames):
+    """若数据库不存在则自动创建"""
+    if NOTION_DB and not NOTION_DB.lower().startswith("placeholder"):
+        print(f"[push_to_notion] Using existing DB: {NOTION_DB}")
+        return NOTION_DB
 
-def ensure_database(sample_fields):
-    global DB_ID
-    if DB_ID:
-        return DB_ID
+    if not NOTION_PARENT_PAGE:
+        raise ValueError("❌ 未设置 NOTION_PARENT_PAGE 环境变量")
 
-    title = "Futures Chip Analysis"
-    # Create if needed
-    if not PARENT:
-        print("[push_to_notion] NOTION_DB not set and NOTION_PARENT_PAGE missing; cannot create database.", file=sys.stderr)
-        sys.exit(3)
+    print("[push_to_notion] Creating new Notion database...")
 
-    # Build property schema: Title + Date + Url + all CSV fields (numbers or text)
+    # 自动识别字段类型（数字/文本）
     props = {
-        "品种": {"title": {}},
-        "日期": {"date": {}},
-        "图表链接": {"url": {}},
+        "Name": {"title": {}},
+        "Symbol": {"rich_text": {}},
+        "Image": {"url": {}},
+        "CSV": {"url": {}}
     }
-    # Map CSV fields to number/text automatically
-    for key in sample_fields:
-        # Heuristic: numeric-like fields
-        props[key] = {"number": {}}
+
+    for f in fieldnames:
+        # 主字段避免重复
+        if f in props:
+            continue
+        # 默认先设为数字型，后续写入时会自动修正
+        props[f] = {"number": {}}
 
     db = notion.databases.create(
-        parent={"type":"page_id","page_id":PARENT},
-        title=[{"type":"text","text":{"content": title}}],
-        properties=props
+        parent={"page_id": NOTION_PARENT_PAGE},
+        title=[{"type": "text", "text": {"content": "Futures Chip Analysis"}}],
+        properties=props,
     )
-    DB_ID = db["id"]
-    print("[push_to_notion] Created database:", DB_ID)
-    return DB_ID
+    dbid = db["id"]
+    print(f"[push_to_notion] Created database: {dbid}")
+    return dbid
 
-def upsert_rows(symbol, png_url, csv_path):
-    # Read CSV
-    with open(csv_path, newline="", encoding="utf-8") as f:
+
+# =============================
+# 类型安全属性生成
+# =============================
+def to_property(value):
+    """自动识别 Notion 属性类型"""
+    if value is None:
+        return {"rich_text": [{"text": {"content": ""}}]}
+    try:
+        # 尝试转数字
+        if isinstance(value, (int, float)):
+            return {"number": float(value)}
+        v_str = str(value).strip()
+        if v_str.replace(".", "", 1).isdigit():
+            return {"number": float(v_str)}
+        # 默认文本
+        return {"rich_text": [{"text": {"content": v_str}}]}
+    except Exception:
+        return {"rich_text": [{"text": {"content": str(value)}}]}
+
+
+# =============================
+# 写入一条记录
+# =============================
+def upsert_rows(symbol, png_url, csv_file):
+    with open(csv_file, "r", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
-        rows = list(reader)
-    if not rows:
-        return
-
-    # Ensure DB with these fields
-    dbid = ensure_database(reader.fieldnames)
-
-    today = dt.date.today().isoformat()
-    # Push top N rows (to avoid Notion limits); you can adjust
-    for r in rows[:100]:
-        props = {
-            "品种": {"title": [{"text": {"content": symbol}}]},
-            "日期": {"date": {"start": today}},
-            "图表链接": {"url": png_url},
-        }
-        for k, v in r.items():
+        dbid = ensure_database(reader.fieldnames)
+        count = 0
+        for row in reader:
             try:
-                num = float(v)
-            except:
-                num = None
-            if num is not None:
-                props[k] = {"number": num}
-            else:
-                # fallback as rich_text
-                props[k] = {"rich_text": [{"text": {"content": str(v)}}]}
+                props = {}
+                for k, v in row.items():
+                    props[k] = to_property(v)
+                # 附加公共字段
+                props["Name"] = {"title": [{"text": {"content": f"{symbol}"} }]}
+                props["Symbol"] = {"rich_text": [{"text": {"content": symbol}}]}
+                props["Image"] = {"url": f"{PAGES_BASE}/docs/{symbol}/{symbol}_chipzones_hybrid.png"}
+                props["CSV"] = {"url": f"{PAGES_BASE}/docs/{symbol}/{symbol}_chipzones_hybrid.csv"}
 
-        notion.pages.create(parent={"database_id": dbid}, properties=props)
+                notion.pages.create(parent={"database_id": dbid}, properties=props)
+                count += 1
+            except Exception as e:
+                print(f"[WARN] Failed row: {row.get('date', '?')} | {e}")
+                traceback.print_exc()
 
+        print(f"[push_to_notion] ✅ Uploaded {count} rows to Notion.")
+
+
+# =============================
+# 主入口
+# =============================
 def main():
-    if not PAGES_BASE:
-        print("[push_to_notion] PAGES_BASE not set; skipping Notion push.", file=sys.stderr)
+    if not NOTION_TOKEN:
+        raise ValueError("❌ 未设置 NOTION_TOKEN 环境变量")
+
+    # 寻找 CSV 和 PNG
+    csv_files = [f for f in os.listdir(".") if f.endswith(".csv")]
+    if not csv_files:
+        print("⚠️ No CSV file found.")
         return
 
-    docs = "docs"
-    for symdir in sorted(glob.glob(os.path.join(docs, "*"))):
-        if not os.path.isdir(symdir): 
-            continue
-        symbol = os.path.basename(symdir)
-        png   = os.path.join(symdir, f"{symbol}_chipzones_hybrid.png")
-        csvf  = os.path.join(symdir, f"{symbol}_chipzones_hybrid.csv")
-        if not os.path.exists(png) or not os.path.exists(csvf):
-            continue
-        png_url = f"{PAGES_BASE}/{symbol}/{os.path.basename(png)}"
-        upsert_rows(symbol, png_url, csvf)
-        print(f"[push_to_notion] Pushed {symbol}: {png_url} & {os.path.basename(csvf)}")
+    for csvf in csv_files:
+        symbol = csvf.split("_")[0].upper()
+        png_path = f"{symbol}_chipzones_hybrid.png"
+        if not os.path.exists(png_path):
+            print(f"⚠️ PNG not found for {symbol}, skipping image link.")
+        upsert_rows(symbol, png_path, csvf)
+
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        print(f"❌ Fatal Error: {e}")
+        traceback.print_exc()
+        exit(1)
