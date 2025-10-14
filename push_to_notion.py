@@ -91,8 +91,8 @@ def upsert_rows(symbol, csv_file):
 
                 props["Name"] = {"title": [{"text": {"content": symbol}}]}
                 props["Symbol"] = {"rich_text": [{"text": {"content": symbol}}]}
-                props["Image"] = {"url": f"{PAGES_BASE}/docs/{symbol}/{symbol}_chipzones_hybrid.png"}
-                props["CSV"] = {"url": f"{PAGES_BASE}/docs/{symbol}/{symbol}_chipzones_hybrid.csv"}
+                props["Image"] = {"url": f"{PAGES_BASE}/{symbol}/{symbol}_chipzones_hybrid.png"}
+                props["CSV"] = {"url": f"{PAGES_BASE}/{symbol}/{symbol}_chipzones_hybrid.csv"}
 
                 notion.pages.create(parent={"database_id": dbid}, properties=props)
                 count += 1
