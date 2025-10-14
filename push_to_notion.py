@@ -1,22 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-push_to_notion_v1.5_fixed.py
+push_to_notion_v1.6_localfix.py
 -----------------------------------
 功能：
-1️⃣ 自动检测 Notion 数据库是否存在，不重复创建
-2️⃣ 每次执行前自动清空旧数据（仅归档，不删库）
-3️⃣ 所有字段统一为文本类型（避免类型冲突）
-4️⃣ 自动过滤 GitHub Pages URL 中的 /docs 路径
-5️⃣ 上传图片和 CSV 链接到 Notion
-
-依赖：
-pip install notion-client
-环境变量：
-- NOTION_TOKEN
-- NOTION_PARENT_PAGE
-- NOTION_DB（可选）
-- PAGES_BASE（例如 https://用户名.github.io/仓库名）
+1️⃣ 自动检测 Notion 数据库是否存在（不重复创建）
+2️⃣ 每次执行前自动清空旧数据（归档旧记录）
+3️⃣ 所有字段统一为文本格式
+4️⃣ 自动过滤 GitHub Pages 路径中的 /docs
+5️⃣ 读取本地 CSV 文件上传，Notion 内保存网页 URL 链接
 """
 
 import os
@@ -29,9 +21,9 @@ NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 NOTION_PARENT_PAGE = os.getenv("NOTION_PARENT_PAGE")
 NOTION_DB = os.getenv("NOTION_DB")
 PAGES_BASE = os.getenv("PAGES_BASE", "").strip().rstrip("/")
-PAGES_BASE = PAGES_BASE.replace("/docs", "")  # ✅ 自动移除多余 /docs
+PAGES_BASE = PAGES_BASE.replace("/docs", "")  # ✅ 自动移除 /docs，防止 URL 错误
 
-# 初始化客户端
+# 初始化 Notion 客户端
 notion = Client(auth=NOTION_TOKEN)
 
 
@@ -58,7 +50,7 @@ def ensure_database(fieldnames):
     if not NOTION_PARENT_PAGE:
         raise ValueError("❌ 未设置 NOTION_PARENT_PAGE 环境变量")
 
-    # ✅ 所有字段设为文本，兼容性最好
+    # ✅ 所有字段设为文本
     props = {
         "Name": {"title": {}},
         "Symbol": {"rich_text": {}},
@@ -98,16 +90,16 @@ def clear_database(dbid):
 
 
 # ========== 上传数据 ==========
-def upsert_rows(symbol, png_url, csv_path):
-    dbid = ensure_database(read_csv_fieldnames(csv_path))
+def upsert_rows(symbol, png_url, local_csv, csv_url):
+    dbid = ensure_database(read_csv_fieldnames(local_csv))
     clear_database(dbid)
 
-    with open(csv_path, "r", encoding="utf-8") as f:
+    with open(local_csv, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         success, fail = 0, 0
         for row in reader:
             try:
-                props = make_properties(row, symbol, png_url, csv_path)
+                props = make_properties(row, symbol, png_url, csv_url)
                 notion.pages.create(parent={"database_id": dbid}, properties=props)
                 success += 1
             except APIResponseError as e:
@@ -117,19 +109,19 @@ def upsert_rows(symbol, png_url, csv_path):
         print(f"[push_to_notion] ✅ Uploaded {success} rows, ❌ Failed {fail}")
 
 
-def read_csv_fieldnames(csv_path):
-    with open(csv_path, "r", encoding="utf-8") as f:
+def read_csv_fieldnames(local_csv):
+    with open(local_csv, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         return reader.fieldnames
 
 
 # ========== 属性构造 ==========
-def make_properties(row, symbol, png_url, csv_path):
+def make_properties(row, symbol, png_url, csv_url):
     props = {
         "Name": {"title": [{"type": "text", "text": {"content": f"{symbol} 筹码分析"}}]},
         "Symbol": {"rich_text": [{"type": "text", "text": {"content": symbol}}]},
         "Image": {"url": png_url},
-        "CSV": {"url": csv_path},
+        "CSV": {"url": csv_url},
     }
 
     for k, v in row.items():
@@ -142,11 +134,21 @@ def make_properties(row, symbol, png_url, csv_path):
 # ========== 主入口 ==========
 def main():
     symbol = os.getenv("SYMBOL", "JM2601")
+
+    # ✅ 本地文件路径
+    local_csv = f"./docs/{symbol}/{symbol}_chipzones_hybrid.csv"
+    local_png = f"./docs/{symbol}/{symbol}_chipzones_hybrid.png"
+
+    # ✅ Notion 中显示的网页链接
+    csv_url = f"{PAGES_BASE}/{symbol}/{symbol}_chipzones_hybrid.csv"
     png_url = f"{PAGES_BASE}/{symbol}/{symbol}_chipzones_hybrid.png"
-    csv_path = f"{PAGES_BASE}/{symbol}/{symbol}_chipzones_hybrid.csv"
 
     print(f"[push_to_notion] Starting upload for {symbol}...")
-    upsert_rows(symbol, png_url, csv_path)
+
+    if not os.path.exists(local_csv):
+        raise FileNotFoundError(f"❌ 本地CSV文件不存在：{local_csv}")
+
+    upsert_rows(symbol, png_url, local_csv, csv_url)
 
 
 if __name__ == "__main__":
