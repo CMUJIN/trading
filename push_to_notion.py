@@ -142,7 +142,7 @@ def build_symbol_directory(symbols):
                 "object": "block",
                 "type": "code",
                 "code": {
-                    "language": "csv",
+                    "language": "plain text",
                     "rich_text": [{"type": "text", "text": {"content": csv_text[:1800]}}],
                 },
             })
