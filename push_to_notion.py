@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-push_to_notion_v3.0_final.py
-✅ 全字段文本模式稳定版
-✅ 自动移除 BOM 和空格
-✅ SAFE MODE 防止误删数据库
-✅ 自动同步目录到 Notion 页面
+push_to_notion_v3.2_clear_db.py
+✅ 每次运行自动清空数据库旧数据
+✅ 自动重建目录
+✅ 修复 /docs/ 链接过滤
+✅ 兼容 symbols 为 dict 或 str
 """
 
 import os
@@ -13,9 +13,6 @@ import yaml
 from notion_client import Client
 from notion_client.errors import APIResponseError
 
-# =============================
-# 环境变量
-# =============================
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 NOTION_DB = os.getenv("NOTION_DB")
 NOTION_PARENT_PAGE = os.getenv("NOTION_PARENT_PAGE")
@@ -23,45 +20,58 @@ PAGES_BASE = os.getenv("PAGES_BASE", "https://cmujin.github.io/trading")
 
 notion = Client(auth=NOTION_TOKEN)
 
-
-# =============================
-# 工具函数
-# =============================
+# -----------------------------
+# 安全文本块包装
+# -----------------------------
 def safe_text_block(content, block_type="heading_2"):
-    """安全生成文字块"""
     return {
         "object": "block",
         "type": block_type,
         block_type: {"rich_text": [{"type": "text", "text": {"content": str(content)}}]},
     }
 
+# -----------------------------
+# 清空数据库（归档旧页面）
+# -----------------------------
+def clear_database(database_id):
+    try:
+        response = notion.databases.query(database_id=database_id)
+        total_deleted = 0
+        while True:
+            for page in response["results"]:
+                notion.pages.update(page["id"], archived=True)
+                total_deleted += 1
+            if not response.get("has_more"):
+                break
+            response = notion.databases.query(
+                database_id=database_id,
+                start_cursor=response["next_cursor"]
+            )
+        print(f"[push_to_notion] 🧹 Cleared {total_deleted} old entries from database.")
+    except Exception as e:
+        print(f"[WARN] Failed to clear database: {e}")
 
-def read_csv(csv_path):
-    """读取 CSV 内容"""
-    with open(csv_path, "r", encoding="utf-8") as f:
-        return f.read()
-
-
+# -----------------------------
+# 清空目录内容（保留目录本身）
+# -----------------------------
 def clear_directory(directory_id):
-    """清理目录内容（保留数据库块）"""
     try:
         children = notion.blocks.children.list(directory_id)["results"]
         cleared = 0
-        skipped = 0
         for child in children:
-            if child["type"] in ["child_database", "child_page"]:
+            if child["type"] in ("child_page", "child_database"):
                 print(f"[SAFE MODE] ⚠️ Skipped deleting {child['type']} block ({child['id']})")
-                skipped += 1
                 continue
             notion.blocks.delete(child["id"])
             cleared += 1
-        print(f"[push_to_notion] 🧹 Cleared {cleared} blocks (skipped {skipped} database/page blocks).")
+        print(f"[push_to_notion] 🧹 Cleared {cleared} blocks (skipped database/page blocks).")
     except Exception as e:
         print(f"[WARN] Failed to clear directory: {e}")
 
-
+# -----------------------------
+# 构建符号目录页
+# -----------------------------
 def build_symbol_directory(symbols):
-    """在 Notion 页面中创建每个品种的图表 + CSV"""
     print("[push_to_notion] 🔁 Rebuilding Symbol Directory page...")
     directory_id = NOTION_PARENT_PAGE
     clear_directory(directory_id)
@@ -70,13 +80,13 @@ def build_symbol_directory(symbols):
     for code in symbols:
         csv_path = f"docs/{code}/{code}_chipzones_hybrid.csv"
         img_path = f"docs/{code}/{code}_chipzones_hybrid.png"
+
         csv_url = f"{PAGES_BASE}/{code}/{code}_chipzones_hybrid.csv"
         img_url = f"{PAGES_BASE}/{code}/{code}_chipzones_hybrid.png"
 
-        # 添加标题
         children.append(safe_text_block(f"{code} Analysis"))
 
-        # 图片块
+        # 图片
         if os.path.exists(img_path):
             children.append({
                 "object": "block",
@@ -86,69 +96,68 @@ def build_symbol_directory(symbols):
         else:
             children.append(safe_text_block(f"⚠️ Image not found for {code}", "paragraph"))
 
-        # CSV 表格块（以代码块形式展示前 1800 字）
+        # CSV 表格文本
         if os.path.exists(csv_path):
-            csv_text = read_csv(csv_path)
+            with open(csv_path, "r", encoding="utf-8") as f:
+                csv_text = f.read()
             children.append({
                 "object": "block",
                 "type": "code",
                 "code": {
-                    "language": "plain text",
+                    "language": "markdown",
                     "rich_text": [{"type": "text", "text": {"content": csv_text[:1800]}}],
                 },
             })
         else:
             children.append(safe_text_block(f"⚠️ CSV not found for {code}", "paragraph"))
 
-    # 上传目录内容
     notion.blocks.children.append(directory_id, children=children)
     print(f"[push_to_notion] ✅ Directory rebuilt with {len(symbols)} symbols.")
 
-
+# -----------------------------
+# 上传 CSV 数据到数据库
+# -----------------------------
 def upsert_rows(code, csv_path):
-    """上传 CSV 行数据到 Notion 数据库"""
     csv_url = f"{PAGES_BASE}/{code}/{code}_chipzones_hybrid.csv"
     img_url = f"{PAGES_BASE}/{code}/{code}_chipzones_hybrid.png"
 
-    with open(csv_path, "r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        # 移除 BOM 并清理列名空格
-        reader.fieldnames = [h.replace('\ufeff', '').strip() for h in reader.fieldnames]
-        for row in reader:
-            props = {
-                "Name": {"title": [{"text": {"content": f"{code} Analysis"}}]},
-                "CSV": {"url": csv_url},
-                "Image": {"url": img_url},
-            }
-            for k, v in row.items():
-                props[k] = {"rich_text": [{"text": {"content": str(v)}}]}
-            try:
+    try:
+        with open(csv_path, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                props = {
+                    "Name": {"title": [{"text": {"content": f"{code} Analysis"}}]},
+                    "CSV": {"url": csv_url},
+                    "Image": {"url": img_url},
+                }
+                for k, v in row.items():
+                    props[k] = {"rich_text": [{"text": {"content": str(v)}}]}
                 notion.pages.create(parent={"database_id": NOTION_DB}, properties=props)
-            except APIResponseError as e:
-                print(f"[WARN] Failed row for {code}: {e}")
+        print(f"[push_to_notion] ✅ Uploaded rows for {code}")
+    except APIResponseError as e:
+        print(f"[WARN] Failed row for {code}: {e}")
 
-
+# -----------------------------
+# 主入口
+# -----------------------------
 def main():
-    """主流程"""
-    print("[push_to_notion] Starting push_to_notion_v3.0_final...")
+    print("[push_to_notion] Starting upload process...")
 
-    # 读取 config.yaml
+    # 清空数据库
+    if NOTION_DB:
+        clear_database(NOTION_DB)
+    else:
+        print("[WARN] NOTION_DB not set, skipping clear.")
+
+    # 加载配置文件
     with open("config.yaml", "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
     raw_symbols = config.get("symbols", [])
+    symbols = [s["code"] if isinstance(s, dict) and "code" in s else s for s in raw_symbols]
+    print(f"[push_to_notion] Symbols to upload: {symbols}")
 
-    # 支持字符串或 dict 格式
-    symbols = []
-    for s in raw_symbols:
-        if isinstance(s, dict) and "code" in s:
-            symbols.append(s["code"])
-        elif isinstance(s, str):
-            symbols.append(s)
-
-    print(f"[push_to_notion] Starting upload for symbols: {symbols}")
-
-    # 上传数据到 Notion DB
+    # 上传数据
     for code in symbols:
         csv_path = f"docs/{code}/{code}_chipzones_hybrid.csv"
         if os.path.exists(csv_path):
@@ -156,8 +165,10 @@ def main():
         else:
             print(f"[WARN] CSV not found for {code}: {csv_path}")
 
-    # 构建目录页
+    # 构建目录
     build_symbol_directory(symbols)
+
+    print("[push_to_notion] ✅ All tasks completed.")
 
 
 if __name__ == "__main__":
