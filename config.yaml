@@ -3,7 +3,8 @@ symbols:
     start: 2025-09-03
   - code: M2601
     start: 2025-08-13
-
+  - code: AL2511
+    start: 2025-09-23
 
 freq: "60m"
 analysis:
