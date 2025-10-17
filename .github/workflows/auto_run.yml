@@ -2,8 +2,8 @@ name: Auto Futures Chip Analysis
 
 on:
   schedule:
-    - cron: "0 8 * * *"   # 北京时间 16:00
-    - cron: "0 18 * * *"  # 北京时间 02:00
+    - cron: "0 10 * * *"   # 北京时间 18:00
+    - cron: "0 20 * * *"  # 北京时间 04:00
   workflow_dispatch:
 
 permissions:
