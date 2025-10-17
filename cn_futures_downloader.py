@@ -169,6 +169,9 @@ def fetch_minute(symbol: str, freq: str, start: date, end: date, tzname: str, ch
     return norm
 
 def save_csv(df: pd.DataFrame, out_dir: str, symbol: str, freq: str):
+    delay = random.randint(2, 3)
+    print(f"[Delay] 开始前等待 {delay}s 后继续下一个品种...\n")
+    time.sleep(delay)
     os.makedirs(out_dir, exist_ok=True)
     fname = f"{symbol.upper()}_{freq}.csv"
     path = os.path.join(out_dir, fname)
@@ -221,11 +224,10 @@ def main():
 
             path = save_csv(out_df, args.out, sym, freq)
             any_paths.append(path)
-            # ✅ 只新增这几行
-            delay = random.randint(3, 8)
-            print(f"[Delay] 等待 {delay}s 后继续下一个品种...\n")
+            delay = random.randint(1, 2)
+            print(f"[Delay] 开始后等待 {delay}s 后继续下一个品种...\n")
             time.sleep(delay)
-            #time.sleep(max(0.0, args.sleep))
+            # time.sleep(max(0.0, args.sleep))
         except Exception as e:
             print(f"[Error] {sym}: {e}", file=sys.stderr)
 
