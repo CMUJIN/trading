@@ -15,6 +15,12 @@ symbols:
     start: 2025-08-14
   - code: M2601
     start: 2025-08-13
+  - code: SA2601
+    start: 2025-09-15
+  - code: UR2601
+    start: 2025-08-19
+  - code: V2601
+    start: 2025-09-15
 
 freq: "60m"
 analysis:
