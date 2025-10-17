@@ -21,7 +21,7 @@ Examples:
 import argparse
 import os
 import sys
-import time
+import time, random
 from datetime import datetime, timedelta, date
 from dateutil.parser import parse as dtparse
 
