@@ -23,6 +23,13 @@ PAGES_BASE = os.getenv("PAGES_BASE", "https://cmujin.github.io/trading")
 
 notion = Client(auth=NOTION_TOKEN)
 
+import argparse
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Push data to Notion.")
+    parser.add_argument('--config', type=str, default='config.yaml', help='Path to the config file.')
+    return parser.parse_args()
+
 # -----------------------------
 # 公共函数
 # -----------------------------
@@ -166,14 +173,22 @@ def upsert_rows(code, csv_path):
 # -----------------------------
 def main():
     print("[push_to_notion] Starting upload process...")
+    
 
     if NOTION_DB:
         clear_database(NOTION_DB)
     else:
         print("[WARN] NOTION_DB not set, skipping clear.")
 
-    with open("config.yaml", "r", encoding="utf-8") as f:
+    args = parse_args()
+    config_file = args.config  # 获取配置文件名
+
+    # 打开指定的配置文件
+    with open(config_file, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
+    
+    # 其他逻辑...
+    print(f"Using config file: {config_file}")
 
     raw_symbols = config.get("symbols", [])
     symbols = [s["code"] if isinstance(s, dict) and "code" in s else s for s in raw_symbols]
