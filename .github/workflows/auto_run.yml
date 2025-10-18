@@ -22,7 +22,7 @@ jobs:
           pip install -r requirements.txt
           pip install --upgrade akshare
       - run: |
-          python run_pipeline.py --config config.yaml
+          python run_pipeline.py --config config_batch_1.yaml
       - name: Commit docs for GitHub Pages
         run: |
           git config user.name "github-actions"
