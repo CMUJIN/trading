@@ -39,6 +39,8 @@ class _IsolatedRequestsSession:
         adapter = requests.adapters.HTTPAdapter(pool_connections=1, pool_maxsize=1, max_retries=0)
         self.session.mount("http://", adapter)
         self.session.mount("https://", adapter)
+        
+        # Log session creation
         logging.info("Created a new session with a unique connection.")
         
         def _session_request(method, url, **kwargs):
@@ -49,16 +51,16 @@ class _IsolatedRequestsSession:
         return self.session
 
     def __exit__(self, exc_type, exc, tb):
-        # 恢复原始 request，并关闭本次 Session（关闭 TCP 连接）
         try:
+            # Ensure we log closing of the session
             logging.info("Closing session and releasing connection.")
-            requests.api.request = self._orig_request
+            self.session.close()
+            logging.info("Session closed successfully.")
+        except Exception as e:
+            logging.error(f"Failed to close session: {e}")
         finally:
-            try:
-                self.session.close()
-                logging.info("Session closed successfully.")
-            except Exception as e:
-                logging.error(f"Failed to close session: {e}")
+            # 恢复原始 request 并关闭连接
+            requests.api.request = self._orig_request
 
 
 try:
