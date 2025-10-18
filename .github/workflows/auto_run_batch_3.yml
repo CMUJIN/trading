@@ -1,0 +1,44 @@
+name: Auto Futures Chip Analysis - Batch 2
+
+on:
+  schedule:
+    - cron: "20 10 * * *"   # 北京时间 18:00
+    - cron: "20 20 * * *"  # 北京时间 04:00
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install --upgrade akshare
+      - run: |
+          python run_pipeline.py --config config_batch_3.yaml
+      - name: Commit docs for GitHub Pages
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add docs || true
+          git commit -m "Auto update analysis results" || true
+          git push || true
+      - name: Push links to Notion (optional)
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DB: ${{ secrets.NOTION_DB }}
+          NOTION_PARENT_PAGE: ${{ secrets.NOTION_PARENT_PAGE }}
+          PAGES_BASE: ${{ secrets.PAGES_BASE }}
+        run: |
+          if [ -n "${NOTION_TOKEN}" ] && [ -n "${PAGES_BASE}" ]; then
+            python push_to_notion.py --config config_batch_3.yaml
+          else
+            echo "Skip Notion push (missing NOTION_TOKEN or PAGES_BASE)"
+          fi
