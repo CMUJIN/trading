@@ -31,6 +31,9 @@ import requests  # NEW
 
 import logging
 
+# 设置日志输出
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
 class _IsolatedRequestsSession:
     def __enter__(self):
         self._orig_request = requests.api.request  # 备份原始入口
@@ -39,9 +42,10 @@ class _IsolatedRequestsSession:
         adapter = requests.adapters.HTTPAdapter(pool_connections=1, pool_maxsize=1, max_retries=0)
         self.session.mount("http://", adapter)
         self.session.mount("https://", adapter)
-        
-        # Log session creation
-        logging.info("Created a new session with a unique connection.")
+
+        # Log session creation and print for debugging
+        print(f"[DEBUG] Created a new session for this request cycle.")
+        logging.info("Created a new session for this request cycle.")
         
         def _session_request(method, url, **kwargs):
             # 强制所有 requests.api.request 走这个独立 Session
@@ -52,15 +56,19 @@ class _IsolatedRequestsSession:
 
     def __exit__(self, exc_type, exc, tb):
         try:
-            # Ensure we log closing of the session
-            logging.info("Closing session and releasing connection.")
-            self.session.close()
+            print("[DEBUG] Closing session and releasing connection...")
+            logging.info("Closing session and releasing connection...")
+            self.session.close()  # Explicitly close session
+            print("[DEBUG] Session closed successfully.")
             logging.info("Session closed successfully.")
         except Exception as e:
+            print(f"[ERROR] Failed to close session: {e}")
             logging.error(f"Failed to close session: {e}")
         finally:
-            # 恢复原始 request 并关闭连接
+            # 恢复原始 request，并关闭连接
             requests.api.request = self._orig_request
+            print("[DEBUG] Restored original request function.")
+            logging.info("Restored original request function.")
 
 
 try:
