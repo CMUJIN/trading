@@ -2,73 +2,30 @@
 # -*- coding: utf-8 -*-
 
 """
-China Futures History Downloader (AkShare-based) - 防限流增强版
-----------------------------------------------------------------
-增强特性：
-✅ 每个品种独立 Session（连接完全隔离）
-✅ 每次请求随机 User-Agent（伪装不同来源）
-✅ 品种间随机延时（2–5 秒）
-✅ 保留内部 args.sleep 延时
-✅ 全程 [INFO] 日志输出
+China Futures History Downloader (AkShare-based) - with strict minute-window filtering
+-------------------------------------------------------------------------------------
+- Downloads daily or minute futures data (e.g., RB0 / CU0 / JM2601) via AkShare.
+- Normalizes CSV columns to: date,time,open,high,low,close,volume,open_interest
+- NEW: For minute data, strictly filters to --start/--end window before saving,
+       regardless of what the upstream source returns.
+- Adds de-duplication and empty-window warnings.
+
+Install (once):
+    pip install akshare pandas python-dateutil
+
+Examples:
+    python cn_futures_downloader.py --symbols JM2601 --freq 60m --start 2025-08-25 --end 2025-09-30 --out ./data
+    python cn_futures_downloader.py --symbols RB0,CU0 --freq daily --start 2016-01-01 --out ./data
 """
 
 import argparse
 import os
 import sys
 import time
-import random
 from datetime import datetime, timedelta, date
 from dateutil.parser import parse as dtparse
+
 import pandas as pd
-import requests
-import logging
-
-# 日志配置
-logging.basicConfig(level=logging.INFO, format='[INFO] %(message)s')
-
-# 随机 User-Agent 池
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0",
-]
-
-# ===========================================
-# 独立 Session 管理器：每个品种独立连接
-# ===========================================
-class _IsolatedRequestsSession:
-    def __enter__(self):
-        self._orig_request = requests.api.request
-        self.session = requests.Session()
-
-        headers = {
-            "User-Agent": random.choice(USER_AGENTS),
-            "Connection": "close"
-        }
-        self.session.headers.update(headers)
-
-        adapter = requests.adapters.HTTPAdapter(pool_connections=1, pool_maxsize=1, max_retries=0)
-        self.session.mount("http://", adapter)
-        self.session.mount("https://", adapter)
-
-        print(f"[INFO] Created new isolated Session with headers: {headers}")
-
-        def _session_request(method, url, **kwargs):
-            return self.session.request(method, url, **kwargs)
-        requests.api.request = _session_request
-        return self.session
-
-    def __exit__(self, exc_type, exc, tb):
-        try:
-            print("[INFO] Closing session and releasing connection...")
-            self.session.close()
-            print("[INFO] Session closed successfully.")
-        except Exception as e:
-            print(f"[INFO] Failed to close session: {e}")
-        finally:
-            requests.api.request = self._orig_request
-            print("[INFO] Restored original request function.")
-
 
 try:
     import akshare as ak
@@ -95,9 +52,6 @@ def parse_args():
     p.add_argument("--chunk-days", type=int, default=60, help="For minute data, fetch in chunks of N days (default 60)")
     return p.parse_args()
 
-# --------------------------
-# 数据标准化函数
-# --------------------------
 def normalize_daily(df: pd.DataFrame) -> pd.DataFrame:
     rename_map = {}
     for c in df.columns:
@@ -111,8 +65,14 @@ def normalize_daily(df: pd.DataFrame) -> pd.DataFrame:
         elif cl in ("持仓量", "hold", "oi", "open_interest"): rename_map[c] = "open_interest"
 
     df = df.rename(columns=rename_map)
+    for col in ["date", "open", "high", "low", "close"]:
+        if col not in df.columns:
+            raise ValueError(f"Daily data missing required column: {col}")
+
     if "volume" not in df.columns: df["volume"] = None
-    if "open_interest" not in df.columns: df["open_interest"] = None
+    if "open_interest" not in df.columns:
+        if "hold" in df.columns: df["open_interest"] = df["hold"]
+        else: df["open_interest"] = None
 
     df["time"] = ""
     df = df[["date", "time", "open", "high", "low", "close", "volume", "open_interest"]].copy()
@@ -137,7 +97,10 @@ def normalize_minute(df: pd.DataFrame, tzname: str) -> pd.DataFrame:
 
     df = df.rename(columns=rename_map)
     if "dt" not in df.columns:
-        raise ValueError("Minute data missing datetime column.")
+        if "date" in df.columns and "time" in df.columns:
+            df["dt"] = df["date"].astype(str) + " " + df["time"].astype(str)
+        else:
+            raise ValueError("Minute data is missing a datetime column.")
 
     df["dt"] = pd.to_datetime(df["dt"], errors="coerce")
     df = df.dropna(subset=["dt"]).copy()
@@ -152,9 +115,6 @@ def normalize_minute(df: pd.DataFrame, tzname: str) -> pd.DataFrame:
     out = out.drop_duplicates().sort_values(["date", "time"]).reset_index(drop=True)
     return out
 
-# --------------------------
-# 数据获取
-# --------------------------
 def fetch_daily(symbol: str) -> pd.DataFrame:
     ensure_akshare()
     df = ak.futures_zh_daily_sina(symbol=symbol.upper())
@@ -208,20 +168,14 @@ def fetch_minute(symbol: str, freq: str, start: date, end: date, tzname: str, ch
     norm = normalize_minute(raw, tzname=tzname)
     return norm
 
-# --------------------------
-# 保存文件
-# --------------------------
 def save_csv(df: pd.DataFrame, out_dir: str, symbol: str, freq: str):
     os.makedirs(out_dir, exist_ok=True)
     fname = f"{symbol.upper()}_{freq}.csv"
     path = os.path.join(out_dir, fname)
     df.to_csv(path, index=False, encoding="utf-8")
-    print(f"[INFO] Saved -> {path}  (rows={len(df)})")
+    print(f"[OK] Saved -> {path}  (rows={len(df)})")
     return path
 
-# --------------------------
-# 主函数
-# --------------------------
 def main():
     args = parse_args()
     symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
@@ -230,10 +184,11 @@ def main():
 
     freq = args.freq.strip().lower()
     if freq != "daily" and freq not in SUPPORTED_MINUTE_FREQS:
-        print(f"[Error] Unsupported --freq {freq}.", file=sys.stderr)
+        print(f"[Error] Unsupported --freq {freq}. Use 'daily' or one of: {','.join(SUPPORTED_MINUTE_FREQS.keys())}", file=sys.stderr)
         sys.exit(2)
 
     today = datetime.now().date()
+
     if args.lookback:
         start_date = today - timedelta(days=int(args.lookback))
         end_date = today
@@ -243,38 +198,32 @@ def main():
 
     any_paths = []
     for sym in symbols:
-        print(f"[INFO] Start fetching {sym}")
+        try:
+            if freq == "daily":
+                df = fetch_daily(sym)
+                df["date_dt"] = pd.to_datetime(df["date"])
+                mask = (df["date_dt"].dt.date >= start_date) & (df["date_dt"].dt.date <= end_date)
+                out_df = df.loc[mask].drop(columns=["date_dt"]).reset_index(drop=True)
+            else:
+                out_df = fetch_minute(sym, freq, start=start_date, end=end_date, tzname=args.tz, chunk_days=args.chunk_days)
+                # STRICT WINDOW FILTERING FOR MINUTES
+                out_df["datetime"] = pd.to_datetime(out_df["date"] + " " + out_df["time"])
+                start_dt = pd.to_datetime(f"{start_date} 00:00:00")
+                end_dt = pd.to_datetime(f"{end_date} 23:59:59")
+                before = len(out_df)
+                out_df = out_df[(out_df["datetime"] >= start_dt) & (out_df["datetime"] <= end_dt)].copy()
+                out_df = out_df.drop(columns=["datetime"]).drop_duplicates().reset_index(drop=True)
+                after = len(out_df)
+                if after == 0:
+                    print(f"[Warn] {sym} {freq}: No rows in requested window {start_date} ~ {end_date}. Upstream may not provide this period.", file=sys.stderr)
+                elif after < before:
+                    print(f"[Info] {sym} {freq}: Strictly filtered {before} -> {after} rows within window.", file=sys.stderr)
 
-        with _IsolatedRequestsSession():
-            try:
-                if freq == "daily":
-                    df = fetch_daily(sym)
-                    df["date_dt"] = pd.to_datetime(df["date"])
-                    mask = (df["date_dt"].dt.date >= start_date) & (df["date_dt"].dt.date <= end_date)
-                    out_df = df.loc[mask].drop(columns=["date_dt"]).reset_index(drop=True)
-                else:
-                    out_df = fetch_minute(sym, freq, start=start_date, end=end_date, tzname=args.tz, chunk_days=args.chunk_days)
-                    out_df["datetime"] = pd.to_datetime(out_df["date"] + " " + out_df["time"])
-                    start_dt = pd.to_datetime(f"{start_date} 00:00:00")
-                    end_dt = pd.to_datetime(f"{end_date} 23:59:59")
-                    before = len(out_df)
-                    out_df = out_df[(out_df["datetime"] >= start_dt) & (out_df["datetime"] <= end_dt)].copy()
-                    out_df = out_df.drop(columns=["datetime"]).drop_duplicates().reset_index(drop=True)
-                    after = len(out_df)
-                    if after == 0:
-                        print(f"[INFO] {sym} {freq}: No rows in requested window {start_date} ~ {end_date}.")
-                    elif after < before:
-                        print(f"[INFO] {sym} {freq}: Strictly filtered {before} -> {after} rows within window.")
-
-                path = save_csv(out_df, args.out, sym, freq)
-                any_paths.append(path)
-                time.sleep(max(0.0, args.sleep))
-            except Exception as e:
-                print(f"[INFO] Error fetching {sym}: {e}", file=sys.stderr)
-
-        delay = random.uniform(2.0, 5.0)
-        print(f"[INFO] Sleeping {delay:.2f} seconds before next symbol...")
-        time.sleep(delay)
+            path = save_csv(out_df, args.out, sym, freq)
+            any_paths.append(path)
+            time.sleep(max(0.0, args.sleep))
+        except Exception as e:
+            print(f"[Error] {sym}: {e}", file=sys.stderr)
 
     if not any_paths:
         print("[Error] No files were saved. Please check symbols, freq, and date range.", file=sys.stderr)
