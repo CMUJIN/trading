@@ -232,52 +232,51 @@ def main():
 
     any_paths = []
     for sym in symbols:
-    print(f"[Start] Fetching {sym}")  # ← 这里原来写成 symbol，会报未定义
+        print(f"[Start] Fetching {sym}")  # ← 注意是 sym，不是 symbol
 
-    # ✅ 为“一个品种”建立独立 Session，会话内所有请求共享这条连接，结束即关闭
-    with _IsolatedRequestsSession():
-        try:
-            if freq == "daily":
-                df = fetch_daily(sym)
-                df["date_dt"] = pd.to_datetime(df["date"])
-                mask = (df["date_dt"].dt.date >= start_date) & (df["date_dt"].dt.date <= end_date)
-                out_df = df.loc[mask].drop(columns=["date_dt"]).reset_index(drop=True)
-            else:
-                out_df = fetch_minute(
-                    sym,
-                    freq,
-                    start=start_date,
-                    end=end_date,
-                    tzname=args.tz,
-                    chunk_days=args.chunk_days,
-                )
-                # STRICT WINDOW FILTERING FOR MINUTES
-                out_df["datetime"] = pd.to_datetime(out_df["date"] + " " + out_df["time"])
-                start_dt = pd.to_datetime(f"{start_date} 00:00:00")
-                end_dt = pd.to_datetime(f"{end_date} 23:59:59")
-                before = len(out_df)
-                out_df = out_df[(out_df["datetime"] >= start_dt) & (out_df["datetime"] <= end_dt)].copy()
-                out_df = out_df.drop(columns=["datetime"]).drop_duplicates().reset_index(drop=True)
-                after = len(out_df)
-                if after == 0:
-                    print(
-                        f"[Warn] {sym} {freq}: No rows in requested window {start_date} ~ {end_date}. "
-                        "Upstream may not provide this period.",
-                        file=sys.stderr,
+        # 为“一个品种”建立独立 Session，会话内所有请求共享这条连接，结束即关闭
+        with _IsolatedRequestsSession():
+            try:
+                if freq == "daily":
+                    df = fetch_daily(sym)
+                    df["date_dt"] = pd.to_datetime(df["date"])
+                    mask = (df["date_dt"].dt.date >= start_date) & (df["date_dt"].dt.date <= end_date)
+                    out_df = df.loc[mask].drop(columns=["date_dt"]).reset_index(drop=True)
+                else:
+                    out_df = fetch_minute(
+                        sym,
+                        freq,
+                        start=start_date,
+                        end=end_date,
+                        tzname=args.tz,
+                        chunk_days=args.chunk_days,
                     )
-                elif after < before:
-                    print(
-                        f"[Info] {sym} {freq}: Strictly filtered {before} -> {after} rows within window.",
-                        file=sys.stderr,
-                    )
+                    # STRICT WINDOW FILTERING FOR MINUTES
+                    out_df["datetime"] = pd.to_datetime(out_df["date"] + " " + out_df["time"])
+                    start_dt = pd.to_datetime(f"{start_date} 00:00:00")
+                    end_dt = pd.to_datetime(f"{end_date} 23:59:59")
+                    before = len(out_df)
+                    out_df = out_df[(out_df["datetime"] >= start_dt) & (out_df["datetime"] <= end_dt)].copy()
+                    out_df = out_df.drop(columns=["datetime"]).drop_duplicates().reset_index(drop=True)
+                    after = len(out_df)
+                    if after == 0:
+                        print(
+                            f"[Warn] {sym} {freq}: No rows in requested window {start_date} ~ {end_date}. "
+                            "Upstream may not provide this period.",
+                            file=sys.stderr,
+                        )
+                    elif after < before:
+                        print(
+                            f"[Info] {sym} {freq}: Strictly filtered {before} -> {after} rows within window.",
+                            file=sys.stderr,
+                        )
 
-            path = save_csv(out_df, args.out, sym, freq)
-            any_paths.append(path)
-            time.sleep(max(0.0, args.sleep))
+                path = save_csv(out_df, args.out, sym, freq)
+                any_paths.append(path)
+                time.sleep(max(0.0, args.sleep))
 
-        except Exception as e:
-            print(f"[Error] {sym}: {e}", file=sys.stderr)
-
+            except Exception as e:
+                print(f"[Error] {sym}: {e}", file=sys.stderr)
 
     if not any_paths:
         print("[Error] No files were saved. Please check symbols, freq, and date range.", file=sys.stderr)
