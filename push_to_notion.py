@@ -1,14 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-push_to_notion_v3.4_refresh_image_cache.py
-✅ 自动清空数据库旧数据
-✅ 自动补齐缺失字段（rich_text 类型）
-✅ 兼容 utf-8-sig（去除 BOM）
-✅ 自动重建目录页
-✅ 修复 /docs/ 路径
-✅ 新增：图片URL加时间戳参数，强制刷新 Notion 图片缓存
-"""
-
 import os
 import csv
 import yaml
@@ -173,7 +162,6 @@ def upsert_rows(code, csv_path):
 # -----------------------------
 def main():
     print("[push_to_notion] Starting upload process...")
-    
 
     if NOTION_DB:
         clear_database(NOTION_DB)
@@ -207,18 +195,15 @@ def main():
 
     # 在此处执行上传到 Notion 的逻辑
     # 例如：将 `all_symbols` 作为参数上传到 Notion
-    # push_to_notion_logic(all_symbols)
-
-    for code in symbols:
+    for code in all_symbols:
         csv_path = f"docs/{code}/{code}_chipzones_hybrid.csv"
         if os.path.exists(csv_path):
             upsert_rows(code, csv_path)
         else:
             print(f"[WARN] CSV not found for {code}: {csv_path}")
 
-    build_symbol_directory(symbols)
+    build_symbol_directory(all_symbols)
     print("[push_to_notion] ✅ All tasks completed.")
-
 
 if __name__ == "__main__":
     main()
