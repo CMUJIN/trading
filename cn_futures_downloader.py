@@ -1,3 +1,4 @@
+
 import argparse
 import os
 import sys
@@ -8,30 +9,29 @@ from datetime import datetime
 from dateutil.parser import parse as dtparse
 import traceback
 import pandas as pd
-import multiprocessing
-import akshare as ak  # Ensure AkShare is imported in each process
+import pytz
+import yaml
+import akshare as ak
 
-# =========================================================
-#  🔒 Enhanced Stable Version (v3) with multiprocessing
-# =========================================================
+def load_config(config_file="config.yaml"):
+    with open(config_file, 'r', encoding='utf-8') as file:
+        config = yaml.safe_load(file)
+    return config
+
+def convert_to_timezone(dt, timezone="Asia/Shanghai"):
+    local_tz = pytz.timezone(timezone)
+    return dt.astimezone(local_tz)
 
 def fetch_data_for_symbol(symbol, start, end, freq, output_path):
-    """
-    Function to fetch data for a single symbol in a separate process.
-    """
     try:
         print(f"[Start] Fetching {symbol}")
-        # Reload AkShare to ensure fresh session for each process
         importlib.reload(ak)
-        
-        # Fetch the data
         data = ak.futures_zh_minute_sina(symbol=symbol, start_date=start, end_date=end, freq=freq)
         
         if data is None or len(data) == 0:
             print(f"[Warn] {symbol}: Data fetch failed or empty response")
             return
         
-        # Save to CSV
         output_file = os.path.join(output_path, f"{symbol}_{start}_{end}_{freq}.csv")
         data.to_csv(output_file, index=False)
         print(f"[Success] {symbol}: Data saved to {output_file}")
@@ -41,14 +41,15 @@ def fetch_data_for_symbol(symbol, start, end, freq, output_path):
         traceback.print_exc()
 
 def fetch_multiple_symbols(symbols, start, end, freq, output_path, max_processes=4):
-    """
-    Function to fetch data for multiple symbols in parallel using multiprocessing.
-    """
-    # Create the output directory if it doesn't exist
+    config = load_config()
+    timezone = config.get("timezone", "Asia/Shanghai")
+    
     if not os.path.exists(output_path):
         os.makedirs(output_path)
 
-    # Create a pool of processes for parallel fetching
+    start = convert_to_timezone(dtparse(start), timezone)
+    end = convert_to_timezone(dtparse(end), timezone)
+    
     with multiprocessing.Pool(processes=max_processes) as pool:
         tasks = [(symbol, start, end, freq, output_path) for symbol in symbols]
         pool.starmap(fetch_data_for_symbol, tasks)
@@ -64,13 +65,9 @@ def parse_args():
 
 if __name__ == "__main__":
     args = parse_args()
-
-    # Extract arguments
     symbols = args.symbols.split(',')
     start = args.start
     end = args.end
     freq = args.freq
     output_path = args.out
-
-    # Fetch data for multiple symbols in parallel
     fetch_multiple_symbols(symbols, start, end, freq, output_path)
