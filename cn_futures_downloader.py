@@ -1,4 +1,3 @@
-import multiprocessing
 import argparse
 import os
 import sys
@@ -12,6 +11,7 @@ import pandas as pd
 import pytz
 import yaml
 import akshare as ak  # Ensure AkShare is imported in each process
+import multiprocessing
 
 # Function to load configuration from config.yaml
 def load_config(config_file="config.yaml"):
@@ -29,9 +29,25 @@ def fetch_data_for_symbol(symbol, start, end, freq, output_path):
         print(f"[Start] Fetching {symbol}")
         importlib.reload(ak)  # Reload AkShare to ensure fresh session for each process
         
-        # Fetch the data
-        data = ak.futures_zh_minute_sina(symbol=symbol, start_date=start, end_date=end, freq=freq)
+        # Prepare the period code for frequency
+        period_code = {"1m": "1min", "5m": "5min", "15m": "15min", "30m": "30min", "60m": "60min"}[freq]
         
+        # Define funcs_to_try with both date and without date parameters
+        funcs_to_try = [
+            lambda: ak.futures_zh_minute_sina(symbol=symbol.upper(), period=period_code, date=start),  # Date-based
+            lambda: ak.futures_zh_minute_sina(symbol=symbol.upper(), period=period_code),  # No date-based
+        ]
+
+        # Try each function until it succeeds
+        data = None
+        for func in funcs_to_try:
+            try:
+                data = func()
+                if data is not None and len(data) > 0:
+                    break
+            except Exception as e:
+                print(f"[Warn] {symbol}: {e}", file=sys.stderr)
+
         if data is None or len(data) == 0:
             print(f"[Warn] {symbol}: Data fetch failed or empty response")
             return
@@ -77,7 +93,6 @@ def parse_args():
 
 if __name__ == "__main__":
     args = parse_args()
-    # Use the command line tz argument, otherwise fall back to config.yaml
     tzname = args.tz if args.tz else load_config().get("timezone", "Asia/Shanghai")
 
     # Extract arguments
