@@ -1,4 +1,4 @@
-name: Auto Futures Chip Analysis
+name: Auto Futures Chip Analysis - Batch 1
 
 on:
   schedule:
@@ -38,7 +38,7 @@ jobs:
           PAGES_BASE: ${{ secrets.PAGES_BASE }}
         run: |
           if [ -n "${NOTION_TOKEN}" ] && [ -n "${PAGES_BASE}" ]; then
-            python push_to_notion.py
+            python push_to_notion.py --config config_batch_1.yaml
           else
             echo "Skip Notion push (missing NOTION_TOKEN or PAGES_BASE)"
           fi
