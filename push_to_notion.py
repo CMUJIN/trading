@@ -27,7 +27,7 @@ import argparse
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Push data to Notion.")
-    parser.add_argument('--config', type=str, default='config.yaml', help='Path to the config file.')
+    parser.add_argument('--config', type=str, nargs='+', required=True, help='List of config files to use (e.g. config_batch_1.yaml config_batch_2.yaml)')
     return parser.parse_args()
 
 # -----------------------------
@@ -181,18 +181,33 @@ def main():
         print("[WARN] NOTION_DB not set, skipping clear.")
 
     args = parse_args()
-    config_file = args.config  # 获取配置文件名
-
-    # 打开指定的配置文件
-    with open(config_file, "r", encoding="utf-8") as f:
-        config = yaml.safe_load(f)
     
-    # 其他逻辑...
-    print(f"Using config file: {config_file}")
+    all_symbols = []  # 用来存储所有配置文件里的 symbols
 
-    raw_symbols = config.get("symbols", [])
-    symbols = [s["code"] if isinstance(s, dict) and "code" in s else s for s in raw_symbols]
-    print(f"[push_to_notion] Symbols to upload: {symbols}")
+    # 遍历所有配置文件，加载每个文件里的 symbols
+    for config_file in args.config:
+        print(f"[INFO] Using config file: {config_file}")
+        try:
+            with open(config_file, "r", encoding="utf-8") as f:
+                config = yaml.safe_load(f)
+
+            # 获取 symbols 列表
+            raw_symbols = config.get("symbols", [])
+            symbols = [s["code"] if isinstance(s, dict) and "code" in s else s for s in raw_symbols]
+
+            # 合并所有文件的 symbols
+            all_symbols.extend(symbols)
+            print(f"[INFO] Symbols in {config_file}: {symbols}")
+        except FileNotFoundError:
+            print(f"[ERROR] Config file not found: {config_file}")
+            continue
+    
+    # 输出所有收集到的 symbols
+    print(f"[INFO] All symbols to upload: {all_symbols}")
+
+    # 在此处执行上传到 Notion 的逻辑
+    # 例如：将 `all_symbols` 作为参数上传到 Notion
+    # push_to_notion_logic(all_symbols)
 
     for code in symbols:
         csv_path = f"docs/{code}/{code}_chipzones_hybrid.csv"
