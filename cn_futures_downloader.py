@@ -1,101 +1,297 @@
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+
 """
-cn_futures_downloader.py — 东方财富多月分钟数据稳定版
--------------------------------------------------
-✅ 支持多月历史数据
-✅ 使用 ak.futures_zh_minute_em（替代新浪接口）
-✅ 加入重试与延迟机制
-✅ 最小侵入式修改，保持原版逻辑一致
+China Futures History Downloader (AkShare-based) - with strict minute-window filtering
+-------------------------------------------------------------------------------------
+- Downloads daily or minute futures data (e.g., RB0 / CU0 / JM2601) via AkShare.
+- Normalizes CSV columns to: date,time,open,high,low,close,volume,open_interest
+- NEW: For minute data, strictly filters to --start/--end window before saving,
+       regardless of what the upstream source returns.
+- Adds de-duplication and empty-window warnings.
+
+Install (once):
+    pip install akshare pandas python-dateutil
+
+Examples:
+    python cn_futures_downloader.py --symbols JM2601 --freq 60m --start 2025-08-25 --end 2025-09-30 --out ./data
+    python cn_futures_downloader.py --symbols RB0,CU0 --freq daily --start 2016-01-01 --out ./data
 """
 
+import argparse
 import os
 import sys
 import time
-import datetime as dt
-import pandas as pd
-import akshare as ak
+from datetime import datetime, timedelta, date
+from dateutil.parser import parse as dtparse
 
+import pandas as pd
+
+try:
+    import akshare as ak
+except Exception:
+    ak = None
+
+SUPPORTED_MINUTE_FREQS = {"1m": "1", "5m": "5", "15m": "15", "30m": "30", "60m": "60"}
 
 def ensure_akshare():
-    try:
-        import akshare
-    except ImportError:
-        print("[Error] akshare is not installed. Please run: pip install akshare")
+    if ak is None:
+        print("[Error] akshare is not installed. Please run: pip install akshare", file=sys.stderr)
         sys.exit(1)
 
+def parse_args():
+    p = argparse.ArgumentParser(description="Download China futures history via AkShare and export normalized CSVs.")
+    p.add_argument("--symbols", required=True, help="Comma-separated list, e.g., RB0,CU0 or JM2601,RB2501")
+    p.add_argument("--freq", required=True, help="daily or one of: 1m,5m,15m,30m,60m")
+    p.add_argument("--start", help="Start date (YYYY-MM-DD). Inclusive. Optional if --lookback is given.")
+    p.add_argument("--end", help="End date (YYYY-MM-DD). Inclusive. Defaults to today if omitted.")
+    p.add_argument("--lookback", type=int, help="Lookback days alternative to --start/--end (e.g., 60)")
+    p.add_argument("--out", default="./data", help="Output folder (default: ./data)")
+    p.add_argument("--tz", default="Asia/Shanghai", help="Timezone for output timestamps (default: Asia/Shanghai)")
+    p.add_argument("--sleep", type=float, default=0.8, help="Seconds to sleep between symbols (default 0.8)")
+    p.add_argument("--chunk-days", type=int, default=60, help="For minute data, fetch in chunks of N days (default 60)")
+    return p.parse_args()
 
-def daterange(start_date, end_date):
-    """生成日期范围（原逻辑保留，但东方财富接口不再按日请求）"""
-    for n in range(int((end_date - start_date).days) + 1):
-        yield start_date + dt.timedelta(n)
+def normalize_daily(df: pd.DataFrame) -> pd.DataFrame:
+    rename_map = {}
+    for c in df.columns:
+        cl = c.lower()
+        if cl in ("日期", "date"): rename_map[c] = "date"
+        elif cl in ("开盘价", "open"): rename_map[c] = "open"
+        elif cl in ("最高价", "high"): rename_map[c] = "high"
+        elif cl in ("最低价", "low"): rename_map[c] = "low"
+        elif cl in ("收盘价", "close"): rename_map[c] = "close"
+        elif cl in ("成交量", "volume"): rename_map[c] = "volume"
+        elif cl in ("持仓量", "hold", "oi", "open_interest"): rename_map[c] = "open_interest"
 
+    df = df.rename(columns=rename_map)
+    for col in ["date", "open", "high", "low", "close"]:
+        if col not in df.columns:
+            raise ValueError(f"Daily data missing required column: {col}")
 
-def fetch_minute_chunk(symbol: str, period_code: str) -> pd.DataFrame:
-    """调用东方财富接口，支持多月历史"""
+    if "volume" not in df.columns: df["volume"] = None
+    if "open_interest" not in df.columns:
+        if "hold" in df.columns: df["open_interest"] = df["hold"]
+        else: df["open_interest"] = None
+
+    df["time"] = ""
+    df = df[["date", "time", "open", "high", "low", "close", "volume", "open_interest"]].copy()
+    for col in ["open", "high", "low", "close"]: df[col] = pd.to_numeric(df[col], errors="coerce")
+    df["volume"] = pd.to_numeric(df["volume"], errors="coerce")
+    df["open_interest"] = pd.to_numeric(df["open_interest"], errors="coerce")
+    df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
+    df = df.drop_duplicates().sort_values(["date"]).reset_index(drop=True)
+    return df
+
+def normalize_minute(df: pd.DataFrame, tzname: str) -> pd.DataFrame:
+    rename_map = {}
+    for c in df.columns:
+        cl = c.lower()
+        if cl in ("datetime", "时间", "时间戳", "date", "日期"): rename_map[c] = "dt"
+        elif cl in ("open", "开盘价"): rename_map[c] = "open"
+        elif cl in ("high", "最高价"): rename_map[c] = "high"
+        elif cl in ("low", "最低价"): rename_map[c] = "low"
+        elif cl in ("close", "收盘价"): rename_map[c] = "close"
+        elif cl in ("volume", "成交量"): rename_map[c] = "volume"
+        elif cl in ("oi", "hold", "open_interest", "持仓量"): rename_map[c] = "open_interest"
+
+    df = df.rename(columns=rename_map)
+    if "dt" not in df.columns:
+        if "date" in df.columns and "time" in df.columns:
+            df["dt"] = df["date"].astype(str) + " " + df["time"].astype(str)
+        else:
+            raise ValueError("Minute data is missing a datetime column.")
+
+    df["dt"] = pd.to_datetime(df["dt"], errors="coerce")
+    df = df.dropna(subset=["dt"]).copy()
+    df["date"] = df["dt"].dt.strftime("%Y-%m-%d")
+    df["time"] = df["dt"].dt.strftime("%H:%M")
+
+    for col in ["open", "high", "low", "close", "volume", "open_interest"]:
+        if col not in df.columns: df[col] = None
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    out = df[["date", "time", "open", "high", "low", "close", "volume", "open_interest"]].copy()
+    out = out.drop_duplicates().sort_values(["date", "time"]).reset_index(drop=True)
+    return out
+
+def fetch_daily(symbol: str) -> pd.DataFrame:
     ensure_akshare()
-    backoffs = [3, 7, 15]
-    for attempt, delay in enumerate(backoffs, start=1):
+    df = ak.futures_zh_daily_sina(symbol=symbol.upper())
+    if df is None or df.empty:
+        raise ValueError(f"No daily data returned by AkShare for symbol {symbol}")
+    return normalize_daily(df)
+
+def daterange(start_date: date, end_date: date):
+    for n in range(int((end_date - start_date).days) + 1):
+        yield start_date + timedelta(n)
+
+def fetch_minute_chunk(symbol: str, period_code: str, day_str: str) -> pd.DataFrame:
+    ensure_akshare()
+    funcs_to_try = [
+        lambda: ak.futures_zh_minute_sina(symbol=symbol.upper(), period=period_code, date=day_str),
+        lambda: ak.futures_zh_minute_sina(symbol=symbol.upper(), period=period_code),
+    ]
+    last_err = None
+    for fn in funcs_to_try:
         try:
-            df = ak.futures_zh_minute_em(symbol=symbol.upper(), period=period_code)
-            if df is None or df.empty:
-                raise RuntimeError("Empty dataframe returned")
-
-            df.columns = [c.lower() for c in df.columns]
-            df["symbol"] = symbol
-            df["fetch_time"] = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            print(f"[OK] {symbol} data fetched: {len(df)} rows")
-            return df
-
+            df = fn()
+            if df is not None and not df.empty:
+                df["source_date"] = day_str
+                return df
         except Exception as e:
-            print(f"[Retry] {symbol} {period_code} failed ({attempt}/{len(backoffs)}): {e}")
-            if attempt < len(backoffs):
-                print(f"[Backoff] Sleep {delay}s before retrying...")
-                time.sleep(delay)
-    raise RuntimeError(f"AkShare minute fetch failed for {symbol} after retries.")
+            last_err = e
+            continue
+    raise RuntimeError(f"AkShare minute fetch failed for {symbol} {day_str}: {last_err}")
 
+def fetch_minute(symbol: str, freq: str, start: date, end: date, tzname: str, chunk_days: int = 60) -> pd.DataFrame:
+    period_code = SUPPORTED_MINUTE_FREQS[freq]
+    all_frames = []
+    cur_start = start
+    while cur_start <= end:
+        cur_end = min(cur_start + timedelta(days=chunk_days - 1), end)
+        for d in daterange(cur_start, cur_end):
+            day_str = d.strftime("%Y-%m-%d")
+            try:
+                df = fetch_minute_chunk(symbol, period_code, day_str)
+                if df is not None and not df.empty:
+                    all_frames.append(df)
+            except Exception as e:
+                print(f"[Warn] {symbol} {freq} {day_str}: {e}", file=sys.stderr)
+                continue
+        cur_start = cur_end + timedelta(days=1)
 
-def save_csv(df: pd.DataFrame, path: str):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    df.to_csv(path, index=False, encoding="utf-8-sig")
+    if not all_frames:
+        raise ValueError(f"No minute data retrieved for {symbol} {freq} between {start} and {end}.")
+
+    raw = pd.concat(all_frames, ignore_index=True)
+    norm = normalize_minute(raw, tzname=tzname)
+    return norm
+
+def save_csv(df: pd.DataFrame, out_dir: str, symbol: str, freq: str):
+    os.makedirs(out_dir, exist_ok=True)
+    fname = f"{symbol.upper()}_{freq}.csv"
+    path = os.path.join(out_dir, fname)
+    df.to_csv(path, index=False, encoding="utf-8")
     print(f"[OK] Saved -> {path}  (rows={len(df)})")
-
+    return path
 
 def main():
-    import argparse
+    args = parse_args()
+    symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
+    if not symbols:
+        print("[Error] No symbols parsed from --symbols", file=sys.stderr); sys.exit(2)
 
-    parser = argparse.ArgumentParser(description="Download CN futures minute data (东方财富接口)")
-    parser.add_argument("--symbols", required=True, help="Comma separated symbols, e.g., JM2601,M2601,AL2511")
-    parser.add_argument("--freq", default="60m", help="Frequency: 1m/5m/15m/30m/60m")
-    parser.add_argument("--start", type=str, default=None, help="Start date (YYYY-MM-DD)")
-    parser.add_argument("--end", type=str, default=None, help="End date (YYYY-MM-DD)")
-    parser.add_argument("--out", type=str, default="./data", help="Output directory")
-    parser.add_argument("--tz", type=str, default="Asia/Shanghai", help="Timezone")
-    parser.add_argument("--sleep_between_symbols", type=int, default=5, help="Delay between symbols (s)")
-    args = parser.parse_args()
+    freq = args.freq.strip().lower()
+    if freq != "daily" and freq not in SUPPORTED_MINUTE_FREQS:
+        print(f"[Error] Unsupported --freq {freq}. Use 'daily' or one of: {','.join(SUPPORTED_MINUTE_FREQS.keys())}", file=sys.stderr)
+        sys.exit(2)
 
-    start_date = dt.datetime.strptime(args.start, "%Y-%m-%d").date() if args.start else None
-    end_date = dt.datetime.strptime(args.end, "%Y-%m-%d").date() if args.end else dt.date.today()
-    symbols = [s.strip() for s in args.symbols.split(",")]
+    today = datetime.now().date()
 
-    for i, symbol in enumerate(symbols):
-        print(f"[RUN] Fetching {symbol} from 东方财富 ({args.freq})")
+    if args.lookback:
+        start_date = today - timedelta(days=int(args.lookback))
+        end_date = today
+    else:
+        start_date = dtparse(args.start).date() if args.start else (date(2010,1,1) if freq == "daily" else today - timedelta(days=60))
+        end_date = dtparse(args.end).date() if args.end else today
 
+    any_paths = []
+    for sym in symbols:
         try:
-            period_code = args.freq.replace("m", "")
-            df = fetch_minute_chunk(symbol, period_code)
-            if df is not None and not df.empty:
-                df = df.drop_duplicates(subset=["datetime"], keep="last")
-                save_csv(df, os.path.join(args.out, f"{symbol}_{args.freq}.csv"))
+            if freq == "daily":
+                df = fetch_daily(sym)
+                df["date_dt"] = pd.to_datetime(df["date"])
+                mask = (df["date_dt"].dt.date >= start_date) & (df["date_dt"].dt.date <= end_date)
+                out_df = df.loc[mask].drop(columns=["date_dt"]).reset_index(drop=True)
             else:
-                print(f"[WARN] No data fetched for {symbol}")
+                out_df = fetch_minute(sym, freq, start=start_date, end=end_date, tzname=args.tz, chunk_days=args.chunk_days)
+                # STRICT WINDOW FILTERING FOR MINUTES
+                out_df["datetime"] = pd.to_datetime(out_df["date"] + " " + out_df["time"])
+                start_dt = pd.to_datetime(f"{start_date} 00:00:00")
+                end_dt = pd.to_datetime(f"{end_date} 23:59:59")
+                before = len(out_df)
+                out_df = out_df[(out_df["datetime"] >= start_dt) & (out_df["datetime"] <= end_dt)].copy()
+                out_df = out_df.drop(columns=["datetime"]).drop_duplicates().reset_index(drop=True)
+                after = len(out_df)
+                if after == 0:
+                    print(f"[Warn] {sym} {freq}: No rows in requested window {start_date} ~ {end_date}. Upstream may not provide this period.", file=sys.stderr)
+                elif after < before:
+                    print(f"[Info] {sym} {freq}: Strictly filtered {before} -> {after} rows within window.", file=sys.stderr)
 
+            path = save_csv(out_df, args.out, sym, freq)
+            any_paths.append(path)
+            time.sleep(max(0.0, args.sleep))
         except Exception as e:
-            print(f"[WARN] {symbol} {args.freq}: {e}")
+            print(f"[Error] {sym}: {e}", file=sys.stderr)
 
-        if i < len(symbols) - 1:
-            print(f"[Sleep] Wait {args.sleep_between_symbols}s before next symbol...")
-            time.sleep(args.sleep_between_symbols)
-
+    if not any_paths:
+        print("[Error] No files were saved. Please check symbols, freq, and date range.", file=sys.stderr)
+        sys.exit(3)
 
 if __name__ == "__main__":
     main()
+
+
+# =========================================================
+#  🔒 Enhanced Stable Version (v2)
+#  - Independent session per symbol (avoids AkShare throttling)
+#  - Auto-retry for transient errors (up to 3 times)
+#  - Random delay between requests and batches
+#  - Graceful exception handling, summary report at end
+# =========================================================
+
+import importlib
+import random
+import traceback
+
+def fetch_with_retry(fetch_func, max_retries=3, symbol=""):
+    for attempt in range(1, max_retries + 1):
+        try:
+            data = fetch_func()
+            if data is not None and len(data) > 0:
+                return data
+        except Exception as e:
+            print(f"[Retry {attempt}] {symbol}: {e}")
+            time.sleep(2 * attempt)
+    print(f"[Fail] {symbol}: All retries failed.")
+    return None
+
+
+def run_stable_multi_fetch(symbols, fetch_func):
+    success_list = []
+    fail_list = []
+
+    for idx, symbol in enumerate(symbols):
+        print(f"\n[Start] Fetching {symbol} ({idx+1}/{len(symbols)})")
+        try:
+            # Reload AkShare to reset internal session and avoid connection-level throttling
+            importlib.reload(ak)
+
+            # Random small delay between single fetches
+            time.sleep(random.uniform(1.0, 2.0))
+
+            data = fetch_with_retry(lambda: fetch_func(symbol), symbol=symbol)
+
+            if data is not None:
+                success_list.append(symbol)
+            else:
+                fail_list.append(symbol)
+
+        except Exception as e:
+            print(f"[Error] {symbol}: {e}")
+            traceback.print_exc()
+            fail_list.append(symbol)
+
+        # Batch delay every 3 symbols
+        if (idx + 1) % 3 == 0:
+            delay = random.uniform(5, 10)
+            print(f"[Info] Batch pause: sleeping {delay:.1f} seconds...")
+            time.sleep(delay)
+
+    # Print summary
+    print("\n================ Summary Report ================")
+    print(f"✅ Success: {len(success_list)} | ❌ Fail: {len(fail_list)} | Total: {len(symbols)}")
+    if fail_list:
+        print("❌ Failed symbols:", ", ".join(fail_list))
+    print("================================================\n")
