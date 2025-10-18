@@ -20,6 +20,7 @@ jobs:
       - run: |
           pip install --upgrade pip
           pip install -r requirements.txt
+          pip install --upgrade akshare
       - run: |
           python run_pipeline.py --config config.yaml
       - name: Commit docs for GitHub Pages
