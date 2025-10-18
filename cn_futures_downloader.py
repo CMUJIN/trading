@@ -29,20 +29,18 @@ import pandas as pd
 
 import requests  # NEW
 
+import logging
+
 class _IsolatedRequestsSession:
-    """
-    在 with 块内把 AkShare/requests 的所有 HTTP 请求绑定到一个新的 Session；
-    退出 with 时恢复原状并关闭 Session（彻底断开 keep-alive 连接）。
-    """
     def __enter__(self):
         self._orig_request = requests.api.request  # 备份原始入口
         self.session = requests.Session()
-        # 禁用持久连接，避免连接级限流累计
         self.session.headers.update({"Connection": "close"})
         adapter = requests.adapters.HTTPAdapter(pool_connections=1, pool_maxsize=1, max_retries=0)
         self.session.mount("http://", adapter)
         self.session.mount("https://", adapter)
-
+        logging.info("Created a new session with a unique connection.")
+        
         def _session_request(method, url, **kwargs):
             # 强制所有 requests.api.request 走这个独立 Session
             return self.session.request(method, url, **kwargs)
@@ -53,12 +51,14 @@ class _IsolatedRequestsSession:
     def __exit__(self, exc_type, exc, tb):
         # 恢复原始 request，并关闭本次 Session（关闭 TCP 连接）
         try:
+            logging.info("Closing session and releasing connection.")
             requests.api.request = self._orig_request
         finally:
             try:
                 self.session.close()
-            except Exception:
-                pass
+                logging.info("Session closed successfully.")
+            except Exception as e:
+                logging.error(f"Failed to close session: {e}")
 
 
 try:
