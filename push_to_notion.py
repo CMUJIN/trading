@@ -16,7 +16,7 @@ import argparse
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Push data to Notion.")
-    parser.add_argument('--config', type=str, nargs='+', required=True, help='List of config files to use (e.g. config_batch_1.yaml config_batch_2.yaml)')
+    parser.add_argument('--config', type=str, default="config*.yaml", help='Glob pattern to match config files (default: "config*.yaml")')
     return parser.parse_args()
 
 # -----------------------------
@@ -161,19 +161,16 @@ def upsert_rows(code, csv_path):
 # 主入口
 # -----------------------------
 def main():
-    print("[push_to_notion] Starting upload process...")
-
-    if NOTION_DB:
-        clear_database(NOTION_DB)
-    else:
-        print("[WARN] NOTION_DB not set, skipping clear.")
-
     args = parse_args()
+    
+    # 获取所有config开头的文件
+    config_files = glob.glob(args.config)  # 根据传入的glob模式，获取匹配的文件
+    print(f"[INFO] Found config files: {config_files}")
     
     all_symbols = []  # 用来存储所有配置文件里的 symbols
 
     # 遍历所有配置文件，加载每个文件里的 symbols
-    for config_file in args.config:
+    for config_file in config_files:
         print(f"[INFO] Using config file: {config_file}")
         try:
             with open(config_file, "r", encoding="utf-8") as f:
@@ -189,21 +186,26 @@ def main():
         except FileNotFoundError:
             print(f"[ERROR] Config file not found: {config_file}")
             continue
+        except yaml.YAMLError as e:
+            print(f"[ERROR] Error reading {config_file}: {e}")
+            continue
     
     # 输出所有收集到的 symbols
     print(f"[INFO] All symbols to upload: {all_symbols}")
 
-    # 在此处执行上传到 Notion 的逻辑
-    # 例如：将 `all_symbols` 作为参数上传到 Notion
-    for code in all_symbols:
-        csv_path = f"docs/{code}/{code}_chipzones_hybrid.csv"
-        if os.path.exists(csv_path):
-            upsert_rows(code, csv_path)
-        else:
-            print(f"[WARN] CSV not found for {code}: {csv_path}")
+    if all_symbols:
+        # 在此处执行上传到 Notion 的逻辑
+        for code in all_symbols:
+            csv_path = f"docs/{code}/{code}_chipzones_hybrid.csv"
+            if os.path.exists(csv_path):
+                upsert_rows(code, csv_path)
+            else:
+                print(f"[WARN] CSV not found for {code}: {csv_path}")
 
-    build_symbol_directory(all_symbols)
-    print("[push_to_notion] ✅ All tasks completed.")
+        build_symbol_directory(all_symbols)
+        print("[push_to_notion] ✅ All tasks completed.")
+    else:
+        print("[WARN] No symbols to upload. Exiting.")
 
 if __name__ == "__main__":
     main()
