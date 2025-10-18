@@ -2,6 +2,7 @@ import os
 import csv
 import yaml
 import time
+import glob  # 导入 glob 模块
 from notion_client import Client
 from notion_client.errors import APIResponseError
 
@@ -13,7 +14,7 @@ PAGES_BASE = os.getenv("PAGES_BASE", "https://cmujin.github.io/trading")
 notion = Client(auth=NOTION_TOKEN)
 
 import argparse
-import glob
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Push data to Notion.")
     parser.add_argument('--config', type=str, default="config*.yaml", help='Glob pattern to match config files (default: "config*.yaml")')
