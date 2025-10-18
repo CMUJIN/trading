@@ -2,9 +2,9 @@ import os
 import csv
 import yaml
 import time
-import glob  # 导入 glob 模块
 from notion_client import Client
 from notion_client.errors import APIResponseError
+import glob
 
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 NOTION_DB = os.getenv("NOTION_DB")
@@ -12,13 +12,6 @@ NOTION_PARENT_PAGE = os.getenv("NOTION_PARENT_PAGE")
 PAGES_BASE = os.getenv("PAGES_BASE", "https://cmujin.github.io/trading")
 
 notion = Client(auth=NOTION_TOKEN)
-
-import argparse
-
-def parse_args():
-    parser = argparse.ArgumentParser(description="Push data to Notion.")
-    parser.add_argument('--config', type=str, default="config*.yaml", help='Glob pattern to match config files (default: "config*.yaml")')
-    return parser.parse_args()
 
 # -----------------------------
 # 公共函数
@@ -162,12 +155,17 @@ def upsert_rows(code, csv_path):
 # 主入口
 # -----------------------------
 def main():
-    args = parse_args()
-    
-    # 获取所有config开头的文件
-    config_files = glob.glob(args.config)  # 根据传入的glob模式，获取匹配的文件
+    print("[push_to_notion] Starting upload process...")
+
+    if NOTION_DB:
+        clear_database(NOTION_DB)
+    else:
+        print("[WARN] NOTION_DB not set, skipping clear.")
+
+    # 自动读取所有配置文件
+    config_files = glob.glob("config*.yaml")  # 获取所有匹配的config文件
     print(f"[INFO] Found config files: {config_files}")
-    
+
     all_symbols = []  # 用来存储所有配置文件里的 symbols
 
     # 遍历所有配置文件，加载每个文件里的 symbols
@@ -194,19 +192,16 @@ def main():
     # 输出所有收集到的 symbols
     print(f"[INFO] All symbols to upload: {all_symbols}")
 
-    if all_symbols:
-        # 在此处执行上传到 Notion 的逻辑
-        for code in all_symbols:
-            csv_path = f"docs/{code}/{code}_chipzones_hybrid.csv"
-            if os.path.exists(csv_path):
-                upsert_rows(code, csv_path)
-            else:
-                print(f"[WARN] CSV not found for {code}: {csv_path}")
+    # 在此处执行上传到 Notion 的逻辑
+    for code in all_symbols:
+        csv_path = f"docs/{code}/{code}_chipzones_hybrid.csv"
+        if os.path.exists(csv_path):
+            upsert_rows(code, csv_path)
+        else:
+            print(f"[WARN] CSV not found for {code}: {csv_path}")
 
-        build_symbol_directory(all_symbols)
-        print("[push_to_notion] ✅ All tasks completed.")
-    else:
-        print("[WARN] No symbols to upload. Exiting.")
+    build_symbol_directory(all_symbols)
+    print("[push_to_notion] ✅ All tasks completed.")
 
 if __name__ == "__main__":
     main()
