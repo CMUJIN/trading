@@ -2,7 +2,7 @@ symbols:
   - code: JM2601
     start: 2025-09-02
   - code: AL2512
-    start: 2025-08-20
+    start: 2025-09-18
 
 freq: "60m"
 analysis:
