@@ -24,25 +24,48 @@ def safe_text_block(content, block_type="heading_2"):
     }
 
 # -----------------------------
-# 清空数据库
+# ✅ 改进版：清空数据库（分页 + 延迟 + 日志）
 # -----------------------------
 def clear_database(database_id):
+    """
+    清空数据库中的所有页面（归档，不删除数据库结构）
+    """
     try:
-        response = notion.databases.query(database_id=database_id)
         total_deleted = 0
-        while True:
-            for page in response["results"]:
-                notion.pages.update(page["id"], archived=True)
-                total_deleted += 1
-            if not response.get("has_more"):
-                break
+        has_more = True
+        next_cursor = None
+
+        print("[push_to_notion] 🧹 Starting full database cleanup...")
+
+        while has_more:
             response = notion.databases.query(
                 database_id=database_id,
-                start_cursor=response["next_cursor"]
+                start_cursor=next_cursor
             )
-        print(f"[push_to_notion] 🧹 Cleared {total_deleted} old entries from database.")
+
+            results = response.get("results", [])
+            if not results:
+                break
+
+            for page in results:
+                page_id = page["id"]
+                try:
+                    notion.pages.update(page_id, archived=True)
+                    total_deleted += 1
+                    if total_deleted % 50 == 0:
+                        print(f"[INFO] Archived {total_deleted} pages so far...")
+                except Exception as e:
+                    print(f"[WARN] Failed to archive page {page_id}: {e}")
+
+            has_more = response.get("has_more", False)
+            next_cursor = response.get("next_cursor")
+
+            # 避免触发 Notion API 限速（每秒最多3次）
+            time.sleep(0.3)
+
+        print(f"[push_to_notion] ✅ Cleared total {total_deleted} entries from database.")
     except Exception as e:
-        print(f"[WARN] Failed to clear database: {e}")
+        print(f"[ERROR] Failed to clear database: {e}")
 
 # -----------------------------
 # 自动补齐数据库字段
@@ -158,7 +181,7 @@ def main():
     print("[push_to_notion] Starting upload process...")
 
     if NOTION_DB:
-        clear_database(NOTION_DB)
+        clear_database(NOTION_DB)   # ✅ 每次运行前彻底清空旧数据
     else:
         print("[WARN] NOTION_DB not set, skipping clear.")
 
@@ -192,7 +215,7 @@ def main():
     # 输出所有收集到的 symbols
     print(f"[INFO] All symbols to upload: {all_symbols}")
 
-    # 在此处执行上传到 Notion 的逻辑
+    # 上传 CSV 数据到数据库
     for code in all_symbols:
         csv_path = f"docs/{code}/{code}_chipzones_hybrid.csv"
         if os.path.exists(csv_path):
@@ -200,6 +223,7 @@ def main():
         else:
             print(f"[WARN] CSV not found for {code}: {csv_path}")
 
+    # 重新构建 Notion 目录页
     build_symbol_directory(all_symbols)
     print("[push_to_notion] ✅ All tasks completed.")
 
