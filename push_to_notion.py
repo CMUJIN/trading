@@ -2,10 +2,13 @@ import os
 import csv
 import yaml
 import time
+import glob
 from notion_client import Client
 from notion_client.errors import APIResponseError
-import glob
 
+# -----------------------------
+# 基本环境变量
+# -----------------------------
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 NOTION_DB = os.getenv("NOTION_DB")
 NOTION_PARENT_PAGE = os.getenv("NOTION_PARENT_PAGE")
@@ -24,12 +27,9 @@ def safe_text_block(content, block_type="heading_2"):
     }
 
 # -----------------------------
-# ✅ 改进版：清空数据库（分页 + 延迟 + 日志）
+# ✅ 修正版：彻底清空数据库
 # -----------------------------
 def clear_database(database_id):
-    """
-    清空数据库中的所有页面（归档，不删除数据库结构）
-    """
     try:
         total_deleted = 0
         has_more = True
@@ -38,7 +38,7 @@ def clear_database(database_id):
         print("[push_to_notion] 🧹 Starting full database cleanup...")
 
         while has_more:
-            response = notion.databases.query(
+            response = notion.databases.query_database(
                 database_id=database_id,
                 start_cursor=next_cursor
             )
@@ -60,7 +60,7 @@ def clear_database(database_id):
             has_more = response.get("has_more", False)
             next_cursor = response.get("next_cursor")
 
-            # 避免触发 Notion API 限速（每秒最多3次）
+            # 避免 Notion API 限速
             time.sleep(0.3)
 
         print(f"[push_to_notion] ✅ Cleared total {total_deleted} entries from database.")
@@ -68,15 +68,24 @@ def clear_database(database_id):
         print(f"[ERROR] Failed to clear database: {e}")
 
 # -----------------------------
-# 自动补齐数据库字段
+# ✅ 修正版：自动补齐数据库字段
 # -----------------------------
 def ensure_properties_exist(database_id, fieldnames):
     try:
         db = notion.databases.retrieve(database_id)
-        existing_props = db["properties"].keys()
+        props = db.get("properties", None)
 
+        # 兼容新版返回结构
+        if props is None and "results" in db and len(db["results"]) > 0:
+            props = db["results"][0].get("properties", {})
+
+        if props is None:
+            print(f"[WARN] Unable to retrieve database properties for {database_id}")
+            return
+
+        existing_props = props.keys()
         for name in fieldnames:
-            clean_name = name.strip().replace("﻿", "")  # 去掉 BOM
+            clean_name = name.strip().replace("﻿", "")
             if clean_name not in existing_props:
                 notion.databases.update(
                     database_id=database_id,
@@ -118,7 +127,6 @@ def build_symbol_directory(symbols):
         csv_path = f"docs/{code}/{code}_chipzones_hybrid.csv"
         img_path = f"docs/{code}/{code}_chipzones_hybrid.png"
         csv_url = f"{PAGES_BASE}/{code}/{code}_chipzones_hybrid.csv"
-        # 🔥 每次运行添加时间戳参数，强制刷新 Notion 缓存
         img_url = f"{PAGES_BASE}/{code}/{code}_chipzones_hybrid.png?ver={int(time.time())}"
 
         children.append(safe_text_block(f"{code} Analysis"))
@@ -181,41 +189,28 @@ def main():
     print("[push_to_notion] Starting upload process...")
 
     if NOTION_DB:
-        clear_database(NOTION_DB)   # ✅ 每次运行前彻底清空旧数据
+        clear_database(NOTION_DB)
     else:
         print("[WARN] NOTION_DB not set, skipping clear.")
 
-    # 自动读取所有配置文件
-    config_files = glob.glob("config*.yaml")  # 获取所有匹配的config文件
+    config_files = glob.glob("config*.yaml")
     print(f"[INFO] Found config files: {config_files}")
 
-    all_symbols = []  # 用来存储所有配置文件里的 symbols
-
-    # 遍历所有配置文件，加载每个文件里的 symbols
+    all_symbols = []
     for config_file in config_files:
         print(f"[INFO] Using config file: {config_file}")
         try:
             with open(config_file, "r", encoding="utf-8") as f:
                 config = yaml.safe_load(f)
-
-            # 获取 symbols 列表
             raw_symbols = config.get("symbols", [])
             symbols = [s["code"] if isinstance(s, dict) and "code" in s else s for s in raw_symbols]
-
-            # 合并所有文件的 symbols
             all_symbols.extend(symbols)
             print(f"[INFO] Symbols in {config_file}: {symbols}")
-        except FileNotFoundError:
-            print(f"[ERROR] Config file not found: {config_file}")
-            continue
-        except yaml.YAMLError as e:
+        except Exception as e:
             print(f"[ERROR] Error reading {config_file}: {e}")
-            continue
-    
-    # 输出所有收集到的 symbols
+
     print(f"[INFO] All symbols to upload: {all_symbols}")
 
-    # 上传 CSV 数据到数据库
     for code in all_symbols:
         csv_path = f"docs/{code}/{code}_chipzones_hybrid.csv"
         if os.path.exists(csv_path):
@@ -223,7 +218,6 @@ def main():
         else:
             print(f"[WARN] CSV not found for {code}: {csv_path}")
 
-    # 重新构建 Notion 目录页
     build_symbol_directory(all_symbols)
     print("[push_to_notion] ✅ All tasks completed.")
 
