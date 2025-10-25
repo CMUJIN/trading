@@ -3,6 +3,7 @@ import csv
 import yaml
 import time
 import glob
+import requests
 from notion_client import Client
 from notion_client.errors import APIResponseError
 
@@ -14,10 +15,13 @@ NOTION_DB = os.getenv("NOTION_DB")
 NOTION_PARENT_PAGE = os.getenv("NOTION_PARENT_PAGE")
 PAGES_BASE = os.getenv("PAGES_BASE", "https://cmujin.github.io/trading")
 
+NOTION_API_BASE = "https://api.notion.com/v1"
+NOTION_VERSION = os.getenv("NOTION_VERSION", "2022-06-28")
+
 notion = Client(auth=NOTION_TOKEN)
 
 # -----------------------------
-# 公共函数
+# 通用函数
 # -----------------------------
 def safe_text_block(content, block_type="heading_2"):
     return {
@@ -27,23 +31,45 @@ def safe_text_block(content, block_type="heading_2"):
     }
 
 # -----------------------------
-# ✅ 修正版：彻底清空数据库
+# 原生 REST 查询接口（用于兼容性兜底）
+# -----------------------------
+def _query_database_pages_raw(database_id, start_cursor=None):
+    url = f"{NOTION_API_BASE}/databases/{database_id}/query"
+    headers = {
+        "Authorization": f"Bearer {NOTION_TOKEN}",
+        "Notion-Version": NOTION_VERSION,
+        "Content-Type": "application/json",
+    }
+    payload = {}
+    if start_cursor:
+        payload["start_cursor"] = start_cursor
+    resp = requests.post(url, headers=headers, json=payload, timeout=30)
+    resp.raise_for_status()
+    return resp.json()
+
+# -----------------------------
+# ✅ 清空数据库（SDK + REST 双保险）
 # -----------------------------
 def clear_database(database_id):
     try:
-        total_deleted = 0
-        has_more = True
-        next_cursor = None
-
         print("[push_to_notion] 🧹 Starting full database cleanup...")
+        total_deleted = 0
+        next_cursor = None
+        has_more = True
 
         while has_more:
-            response = notion.databases.query_database(
-                database_id=database_id,
-                start_cursor=next_cursor
-            )
+            # 优先尝试 SDK，如果失败则走 REST
+            try:
+                if hasattr(notion.databases, "query"):
+                    resp = notion.databases.query(database_id=database_id, start_cursor=next_cursor)
+                elif hasattr(notion.databases, "query_database"):
+                    resp = notion.databases.query_database(database_id=database_id, start_cursor=next_cursor)
+                else:
+                    resp = _query_database_pages_raw(database_id, next_cursor)
+            except Exception:
+                resp = _query_database_pages_raw(database_id, next_cursor)
 
-            results = response.get("results", [])
+            results = resp.get("results", [])
             if not results:
                 break
 
@@ -56,30 +82,26 @@ def clear_database(database_id):
                         print(f"[INFO] Archived {total_deleted} pages so far...")
                 except Exception as e:
                     print(f"[WARN] Failed to archive page {page_id}: {e}")
+                time.sleep(0.2)
 
-            has_more = response.get("has_more", False)
-            next_cursor = response.get("next_cursor")
-
-            # 避免 Notion API 限速
-            time.sleep(0.3)
+            has_more = resp.get("has_more", False)
+            next_cursor = resp.get("next_cursor")
 
         print(f"[push_to_notion] ✅ Cleared total {total_deleted} entries from database.")
     except Exception as e:
         print(f"[ERROR] Failed to clear database: {e}")
 
 # -----------------------------
-# ✅ 修正版：自动补齐数据库字段
+# ✅ 自动补齐数据库字段（软失败模式）
 # -----------------------------
-def ensure_properties_exist(database_id, fieldnames):
+def ensure_properties_exist(database_id, fieldnames, soft_fail=True):
     try:
         db = notion.databases.retrieve(database_id)
         props = db.get("properties", None)
-
-        # 兼容新版返回结构
-        if props is None and "results" in db and len(db["results"]) > 0:
+        if props is None and "results" in db and db["results"]:
             props = db["results"][0].get("properties", {})
 
-        if props is None:
+        if not props:
             print(f"[WARN] Unable to retrieve database properties for {database_id}")
             return
 
@@ -87,15 +109,24 @@ def ensure_properties_exist(database_id, fieldnames):
         for name in fieldnames:
             clean_name = name.strip().replace("﻿", "")
             if clean_name not in existing_props:
-                notion.databases.update(
-                    database_id=database_id,
-                    properties={clean_name: {"rich_text": {}}}
-                )
-                print(f"[push_to_notion] ➕ Added missing property: {clean_name}")
+                try:
+                    notion.databases.update(
+                        database_id=database_id,
+                        properties={clean_name: {"rich_text": {}}}
+                    )
+                    print(f"[push_to_notion] ➕ Added missing property: {clean_name}")
+                except Exception as e:
+                    if soft_fail:
+                        print(f"[SOFT-WARN] Could not add property '{clean_name}': {e}")
+                    else:
+                        raise
 
-        print("[push_to_notion] ✅ 数据库字段已自动补齐。")
+        print("[push_to_notion] ✅ 数据库字段已自动补齐（软失败模式启用）。")
     except Exception as e:
-        print(f"[WARN] Failed to update properties: {e}")
+        if soft_fail:
+            print(f"[SOFT-WARN] Failed to update database properties: {e}")
+        else:
+            raise
 
 # -----------------------------
 # 清空目录页
@@ -166,7 +197,7 @@ def upsert_rows(code, csv_path):
 
     with open(csv_path, "r", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
-        ensure_properties_exist(NOTION_DB, reader.fieldnames)
+        ensure_properties_exist(NOTION_DB, reader.fieldnames, soft_fail=True)
         for row in reader:
             props = {
                 "Name": {"title": [{"text": {"content": f"{code} Analysis"}}]},
