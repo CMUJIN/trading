@@ -1,6 +1,8 @@
 symbols:
   - code: V2601
     start: 2025-09-15
+  - code: LC2601
+    start: 2025-08-15
 
 freq: "60m"
 analysis:
