@@ -138,10 +138,11 @@ def plot_chart(df,zones,symbol):
     x=np.arange(len(df))
     fig,(ax1,ax2)=plt.subplots(2,1,figsize=(14,8),sharex=True,gridspec_kw={'height_ratios':[2,1]})
     ax1.plot(x,df['close'],color='black',lw=1.2,label='price')
-    ax1b=ax1.twinx()
-    ax1b.plot(x,df['long_strength'],color='red',lw=1.0,label='long')
-    ax1b.plot(x,df['short_strength'],color='green',lw=1.0,label='short')
-    ax1b.set_ylim(0,1)
+     # === 🚫 注释掉多空吸筹曲线 ===
+    #ax1b=ax1.twinx()
+    #ax1b.plot(x,df['long_strength'],color='red',lw=1.0,label='long')
+    #ax1b.plot(x,df['short_strength'],color='green',lw=1.0,label='short')
+    #ax1b.set_ylim(0,1)
     for _,r in zones.iterrows():
         color='#FF8A33' if r['zone_type']=='短期区' else '#CC5522'
         ax1.axhspan(r['low'],r['high'],color=color,alpha=0.25)
@@ -159,8 +160,8 @@ def plot_chart(df,zones,symbol):
             ax1.text(xmin,mid+dy,txt,fontsize=8,color=color,va='center',ha='left')
     ax1.set_title(f"{symbol} chip_analysis (v3.8.2 hybrid+)",fontsize=12)
     lines1,labels1=ax1.get_legend_handles_labels()
-    lines2,labels2=ax1b.get_legend_handles_labels()
-    ax1.legend(lines1+lines2,labels1+labels2,loc='upper right',fontsize=9)
+    #lines2,labels2=ax1b.get_legend_handles_labels()
+    #ax1.legend(lines1+lines2,labels1+labels2,loc='upper right',fontsize=9)
     # 📊 副图：成交量 + 持仓量（双轴）
     # =============================
     
