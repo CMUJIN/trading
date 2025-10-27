@@ -1,0 +1,13 @@
+{
+    "alpha": 0.382,
+    "slope_ratio": 0.2,
+    "move_ratio": 0.3,
+    "slope": 0.0015,
+    "move": 0.01,
+    "delta_oi": 0.01,
+    "oi_up": 0.55,
+    "min_bars": 6,
+    "dir_ratio": 0.55,
+    "oi_ema_span": 5,
+    "use_dynamic_vol": true
+}
