@@ -73,7 +73,20 @@ def build_symbol_directory(symbols):
         children.append(safe_text_block(f"📊 {code} Analysis"))
         children.append(safe_text_block(last_update, "paragraph"))
 
-        # 图片展示
+        # 图片展示（顺序：先推送 trend_v6，再推送 chipzones_hybrid）
+        trend_path = f"docs/{code}/{code}_trend_v6.png"
+        trend_url = f"{PAGES_BASE}/{code}/{code}_trend_v6.png?ver={int(time.time())}"
+
+        if os.path.exists(trend_path):
+            children.append({
+                "object": "block",
+                "type": "image",
+                "image": {"type": "external", "external": {"url": trend_url}},
+            })
+        else:
+            children.append(safe_text_block(f"⚠️ Trend_v6 image not found for {code}", "paragraph"))
+
+        # 然后推送 chipzones_hybrid
         if os.path.exists(img_path):
             children.append({
                 "object": "block",
@@ -81,7 +94,8 @@ def build_symbol_directory(symbols):
                 "image": {"type": "external", "external": {"url": img_url}},
             })
         else:
-            children.append(safe_text_block(f"⚠️ Image not found for {code}", "paragraph"))
+            children.append(safe_text_block(f"⚠️ Chipzones image not found for {code}", "paragraph"))
+
 
         # CSV 数据展示（部分内容）
         if os.path.exists(csv_path):
