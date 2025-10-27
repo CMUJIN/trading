@@ -87,7 +87,51 @@ def main():
         except SystemExit:
             print(f"[WARN] Analysis failed for {sym}.", file=sys.stderr)
             continue
+        
+        # 2.5) Trend detection (v6)
+        trend_script = os.path.join(BASE, "trend_oi_extreme_signedslope_dirMove_param_v6.py")
+        trend_cfg = os.path.join(BASE, "trend_v6_config.json")
 
+        if os.path.exists(trend_script) and os.path.exists(trend_cfg):
+            print(f"[INFO] Running trend detection v6 for {sym} ...", flush=True)
+            try:
+                import json
+                with open(trend_cfg, "r", encoding="utf-8") as f:
+                    cfg_v6 = json.load(f)
+
+                trend_cmd = [
+                    sys.executable, trend_script,
+                    csv_in,
+                    "--use_dynamic_vol",
+                    "--alpha", str(cfg_v6.get("alpha", 0.382)),
+                    "--slope_ratio", str(cfg_v6.get("slope_ratio", 0.2)),
+                    "--move_ratio", str(cfg_v6.get("move_ratio", 0.3)),
+                    "--slope", str(cfg_v6.get("slope", 0.0015)),
+                    "--move", str(cfg_v6.get("move", 0.01)),
+                    "--delta_oi", str(cfg_v6.get("delta_oi", 0.01)),
+                    "--oi_up", str(cfg_v6.get("oi_up", 0.55)),
+                    "--min_bars", str(cfg_v6.get("min_bars", 6)),
+                    "--dir_ratio", str(cfg_v6.get("dir_ratio", 0.55)),
+                    "--oi_ema_span", str(cfg_v6.get("oi_ema_span", 5)),
+                ]
+
+                run(trend_cmd, cwd=str(BASE))
+
+                trend_out = os.path.splitext(csv_in)[0] + "_trend_v6.png"
+                sym_dir = os.path.join(pages_root, sym)
+                ensure_dir(sym_dir)
+
+                if os.path.exists(trend_out):
+                    target_path = os.path.join(sym_dir, f"{sym}_trend_v6.png")
+                    shutil.copy2(trend_out, target_path)
+                    print(f"[OK] Trend v6 image saved to {target_path}")
+                else:
+                    print(f"[WARN] No trend output found for {sym}")
+
+            except Exception as e:
+                print(f"[WARN] Trend detection failed for {sym}: {e}", file=sys.stderr)
+
+        
         # 3) collect outputs -> docs/{symbol}/
         sym_dir = os.path.join(pages_root, sym)
         ensure_dir(sym_dir)
