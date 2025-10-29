@@ -1,8 +1,6 @@
 symbols:
   - code: C2601
-    start: 2025-06-18
-  - code: SR2601
-    start: 2025-08-20
+    start: 2025-08-18
 
 freq: "60m"
 analysis:
