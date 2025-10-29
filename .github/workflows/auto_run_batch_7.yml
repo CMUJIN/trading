@@ -1,9 +1,9 @@
-name: Auto Futures Chip Analysis - Batch 1
+name: Auto Futures Chip Analysis - Batch 7
 
 on:
   schedule:
-    - cron: "7 10 * * *"   # 北京时间 18:00
-    - cron: "7 20 * * *"  # 北京时间 04:00
+    - cron: "5 09 * * *"   # 北京时间 17:00
+    - cron: "5 19 * * *"  # 北京时间 03:00
   workflow_dispatch:
 
 permissions:
