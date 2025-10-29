@@ -1,8 +1,6 @@
 symbols:
   - code: SP2601
     start: 2025-08-14
-  - code: M2601
-    start: 2025-08-13
 
 freq: "60m"
 analysis:
