@@ -1,8 +1,6 @@
 symbols:
   - code: P2601
     start: 2025-08-12
-  - code: AG2512
-    start: 2025-09-12
 
 freq: "60m"
 analysis:
