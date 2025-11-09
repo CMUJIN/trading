@@ -1,6 +1,6 @@
 symbols:
-  - code: M2601
-    start: 2025-08-13
+  - code: EC2604
+    start: 2025-07-24
 
 freq: "60m"
 analysis:
