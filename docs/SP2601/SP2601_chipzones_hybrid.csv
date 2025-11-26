@@ -1,6 +1,6 @@
 ﻿low,high,recent_strength,all_strength,avg_strength,persistent,zone_type
 5119,5146,0.0,0.9,0.4,False,短期区
-5199,5225,强：0.5,0.6,0.5,False,短期区
+5199,5225,强：0.5,0.6,0.6,False,短期区
 5225,5252,0.2,0.6,0.4,False,短期区
 5411,5437,0.4,0.5,0.4,False,短期区
 5464,5490,强：1.0,强：1.0,强：1.0,True,持久区
