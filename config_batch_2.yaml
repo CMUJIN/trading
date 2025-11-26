@@ -1,6 +1,6 @@
 symbols:
-  - code: AO2601
-    start: 2025-08-12
+  - code: P2601
+    start: 2025-10-20
 
 freq: "60m"
 analysis:
