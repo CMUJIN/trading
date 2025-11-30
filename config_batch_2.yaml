@@ -1,6 +1,8 @@
 symbols:
   - code: P2601
     start: 2025-10-20
+  - code: CJ2601
+    start: 2025-10-17
 
 freq: "60m"
 analysis:
