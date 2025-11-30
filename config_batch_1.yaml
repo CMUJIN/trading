@@ -1,6 +1,8 @@
 symbols:
   - code: PK2601
     start: 2025-11-20
+  - code: MA2601
+    start: 2025-10-20
 
 freq: "60m"
 analysis:
