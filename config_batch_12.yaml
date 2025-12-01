@@ -1,6 +1,8 @@
 symbols:
+  - code: JM2601
+    start: 2025-10-30
   - code: JM2605
-    start: 2025-09-30
+    start: 2025-10-30
 
 freq: "60m"
 analysis:
