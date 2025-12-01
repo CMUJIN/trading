@@ -1,8 +1,8 @@
 symbols:
   - code: FG2601
     start: 2025-10-15
-  - code: LC2601
-    start: 2025-09-12
+  - code: FG2605
+    start: 2025-10-15
 
 freq: "60m"
 analysis:
