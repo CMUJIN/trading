@@ -135,78 +135,70 @@ def estimate_chipzones(df, window_zone=60, bins_pct=0.5, beta=0.7, half_life=10,
                              avg_strength=avg,persistent=bool(rec and all_),zone_type='持久区' if rec and all_ else '短期区'))
     return pd.DataFrame(rows)
 
-def plot_chart(df,zones,symbol):
-    x=np.arange(len(df))
-    fig,(ax1,ax2)=plt.subplots(2,1,figsize=(14,8),sharex=True,gridspec_kw={'height_ratios':[2,1]})
-    ax1.plot(x,df['close'],color='black',lw=1.2,label='price')
-     # === 🚫 注释掉多空吸筹曲线 ===
-    #ax1b=ax1.twinx()
-    #ax1b.plot(x,df['long_strength'],color='red',lw=1.0,label='long')
-    #ax1b.plot(x,df['short_strength'],color='green',lw=1.0,label='short')
-    #ax1b.set_ylim(0,1)
-    for _,r in zones.iterrows():
-        color='#FF8A33' if r['zone_type']=='短期区' else '#CC5522'
-        ax1.axhspan(r['low'],r['high'],color=color,alpha=0.25)
+def plot_chart(df, zones, symbol):
+    x = np.arange(len(df))
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 8), sharex=True, gridspec_kw={'height_ratios': [2, 1]})
+    ax1.plot(x, df['close'], color='black', lw=1.2, label='price')
+
+    for _, r in zones.iterrows():
+        color = '#FF8A33' if r['zone_type'] == '短期区' else '#CC5522'
+        ax1.axhspan(r['low'], r['high'], color=color, alpha=0.25)
+
     if not zones.empty:
-        zones=zones.sort_values('low')
-        xmin=x[0]
-        offsets={}
-        for _,r in zones.iterrows():
-            mid=(r['low']+r['high'])/2.0
-            key=round(mid,-1)
-            offsets[key]=offsets.get(key,0)+1
-            dy=(offsets[key]-1)*0.0
-            txt=f"{int(round(r['low']))}-{int(round(r['high']))} strength:{r['avg_strength']:.1f}"
-            color='#C24E1A' if r['zone_type']=='persistent_zone' else '#B35A00'
-            ax1.text(xmin,mid+dy,txt,fontsize=8,color=color,va='center',ha='left')
-    ax1.set_title(f"{symbol} chip_analysis (v3.8.2 hybrid+)",fontsize=12)
-    lines1,labels1=ax1.get_legend_handles_labels()
-    #lines2,labels2=ax1b.get_legend_handles_labels()
-    #ax1.legend(lines1+lines2,labels1+labels2,loc='upper right',fontsize=9)
+        zones = zones.sort_values('low')
+        xmin = x[0]
+        offsets = {}
+        for _, r in zones.iterrows():
+            mid = (r['low'] + r['high']) / 2.0
+            key = round(mid, -1)
+            offsets[key] = offsets.get(key, 0) + 1
+            dy = (offsets[key] - 1) * 0.0
+            txt = f"{int(round(r['low']))}-{int(round(r['high']))} strength:{r['avg_strength']:.1f}"
+            color = '#C24E1A' if r['zone_type'] == 'persistent_zone' else '#B35A00'
+            ax1.text(xmin, mid + dy, txt, fontsize=8, color=color, va='center', ha='left')
+
+    ax1.set_title(f"{symbol} chip_analysis (v3.8.2 hybrid+)", fontsize=12)
+
     # 📊 副图：成交量 + 持仓量（双轴）
-    # =============================
-    
-    # 左轴：成交量
     ax2.bar(df.index, df["volume"], color="gray", label="volume")
     ax2.set_ylabel("成交量", color="gray")
     ax2.tick_params(axis='y', labelcolor='gray')
-    
-    # 右轴：持仓量
+
     ax3 = ax2.twinx()
     ax3.plot(df.index, df["open_interest"], color="blue", label="OI")
-    ax3.set_ylabel("volume", color="blue")
+    ax3.set_ylabel("OI", color="blue")
     ax3.tick_params(axis='y', labelcolor='blue')
-    
+
     # 自动设置持仓量上下限
     oi_min = df["open_interest"].min()
     oi_max = df["open_interest"].max()
     margin = (oi_max - oi_min) * 0.05
     ax3.set_ylim(oi_min - margin, oi_max + margin)
-    
-    # 图例放右上角，避免遮挡
+
     ax3.legend(loc="upper right")
 
-
-    
     if 'datetime' in df.columns:
-        step=max(1,len(df)//10)
+        step = max(1, len(df) // 10)
         ax2.set_xticks(x[::step])
-        ax2.set_xticklabels(df['datetime'].dt.strftime('%m-%d %H:%M')[::step],rotation=30,ha='right')
+        ax2.set_xticklabels(df['datetime'].dt.strftime('%m-%d %H:%M')[::step], rotation=30, ha='right')
+
     plt.tight_layout()
+
     # === 使用小时级别的时间戳（YYYYMMDD_HH） ===
     ts = datetime.now().strftime("%Y%m%d_%H")
-    
+
     # 确保 docs/<symbol>/ 目录存在
     save_dir = f"docs/{symbol}"
     os.makedirs(save_dir, exist_ok=True)
-    
-    # 输出文件名：symbol_chipzones_hybrid_YYYYMMDD_HH.png
-    out_png = f"{save_dir}/{symbol}_chipzones_hybrid_{ts}.png"
-    
-    plt.savefig(out_png, dpi=300)
+
+    # 输出文件名：symbol_trend_v6_YYYYMMDD_HH.png
+    trend_out_png = f"{save_dir}/{symbol}_trend_v6_{ts}.png"
+
+    plt.savefig(trend_out_png, dpi=300)
     plt.close(fig)
-    
-    print(f"[OK] 图像已保存：{out_png}")
+
+    print(f"[OK] Trend_v6 图像已保存：{trend_out_png}")
+
 
 
 def highlight_csv(df,thresholds):
