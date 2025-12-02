@@ -81,7 +81,7 @@ def build_symbol_directory(symbols):
         csv_url = f"{PAGES_BASE}/{code}/{code}_chipzones_hybrid.csv"
 
         # ===== 寻找最新 chipzones 图 =====
-        chip_pattern = f"docs/{code}/{code}_chipzones_hybrid_*.png"
+        chip_pattern = f"docs/{code}/{code}_chipzones_hybrid*.png"
         chip_path = get_latest_image(chip_pattern)
 
         if chip_path:
@@ -91,7 +91,7 @@ def build_symbol_directory(symbols):
             img_url = None
 
         # ===== 寻找最新 trend_v6 图 =====
-        trend_pattern = f"docs/{code}/{code}_trend_v6_*.png"
+        trend_pattern = f"docs/{code}/{code}_trend_v6*.png"
         trend_path = get_latest_image(trend_pattern)
 
         if trend_path:
