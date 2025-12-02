@@ -135,6 +135,18 @@ def estimate_chipzones(df, window_zone=60, bins_pct=0.5, beta=0.7, half_life=10,
                              avg_strength=avg,persistent=bool(rec and all_),zone_type='持久区' if rec and all_ else '短期区'))
     return pd.DataFrame(rows)
 
+# === 自动删除目录下所有文件 ===
+def delete_all_files(symbol):
+    save_dir = f"docs/{symbol}"
+    os.makedirs(save_dir, exist_ok=True)
+
+    # 删除目录下所有文件
+    for file in os.listdir(save_dir):
+        file_path = os.path.join(save_dir, file)
+        if os.path.isfile(file_path):
+            os.remove(file_path)
+            print(f"[INFO] 删除文件：{file_path}")
+
 def plot_chart(df, zones, symbol):
     x = np.arange(len(df))
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 8), sharex=True, gridspec_kw={'height_ratios': [2, 1]})
@@ -187,6 +199,9 @@ def plot_chart(df, zones, symbol):
     # === 使用小时级别的时间戳（YYYYMMDD_HH） ===
     ts = datetime.now().strftime("%Y%m%d_%H")
 
+    # 删除目录下所有文件
+    delete_all_files(symbol)
+
     # 确保 docs/<symbol>/ 目录存在
     save_dir = f"docs/{symbol}"
     os.makedirs(save_dir, exist_ok=True)
@@ -199,46 +214,44 @@ def plot_chart(df, zones, symbol):
 
     print(f"[OK] Trend_v6 图像已保存：{trend_out_png}")
 
-
-
-def highlight_csv(df,thresholds):
-    for c in ['recent_strength','all_strength','avg_strength']:
-        q=thresholds[c]
-        df[c]=df[c].apply(lambda v: f'强：{v:.1f}' if v>=q else f'{v:.1f}')
-    df['low']=df['low'].round(0).astype(int)
-    df['high']=df['high'].round(0).astype(int)
+def highlight_csv(df, thresholds):
+    for c in ['recent_strength', 'all_strength', 'avg_strength']:
+        q = thresholds[c]
+        df[c] = df[c].apply(lambda v: f'强：{v:.1f}' if v >= q else f'{v:.1f}')
+    df['low'] = df['low'].round(0).astype(int)
+    df['high'] = df['high'].round(0).astype(int)
     return df
 
 def main():
-    parser=argparse.ArgumentParser()
-    parser.add_argument("--csv",required=True)
-    parser.add_argument("--window_strength",type=int,default=20)
-    parser.add_argument("--window_zone",type=int,default=60)
-    parser.add_argument("--bins_pct",type=float,default=0.5)
-    parser.add_argument("--beta",type=float,default=0.7)
-    parser.add_argument("--half_life",type=float,default=10)
-    parser.add_argument("--quantile",type=float,default=0.8)
-    args=parser.parse_args()
-    df=pd.read_csv(args.csv)
-    df.columns=[c.lower() for c in df.columns]
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--csv", required=True)
+    parser.add_argument("--window_strength", type=int, default=20)
+    parser.add_argument("--window_zone", type=int, default=60)
+    parser.add_argument("--bins_pct", type=float, default=0.5)
+    parser.add_argument("--beta", type=float, default=0.7)
+    parser.add_argument("--half_life", type=float, default=10)
+    parser.add_argument("--quantile", type=float, default=0.8)
+    args = parser.parse_args()
+    df = pd.read_csv(args.csv)
+    df.columns = [c.lower() for c in df.columns]
     if 'date' in df.columns and 'time' in df.columns:
-        df['datetime']=pd.to_datetime(df['date'].astype(str)+' '+df['time'].astype(str),errors='coerce')
+        df['datetime'] = pd.to_datetime(df['date'].astype(str) + ' ' + df['time'].astype(str), errors='coerce')
     elif 'datetime' in df.columns:
-        df['datetime']=pd.to_datetime(df['datetime'],errors='coerce')
-    for c in ['close','volume','open_interest']:
-        df[c]=pd.to_numeric(df[c],errors='coerce')
-    df=df.dropna(subset=['close','volume','open_interest'])
-    df=df[df['volume']>0].reset_index(drop=True)
-    df=calc_accum_strength(df,args.window_strength)
-    zones=estimate_chipzones(df,args.window_zone,args.bins_pct,args.beta,args.half_life,args.quantile)
-    symbol=os.path.splitext(os.path.basename(args.csv))[0].split('_')[0].upper()
-    plot_chart(df,zones,symbol)
+        df['datetime'] = pd.to_datetime(df['datetime'], errors='coerce')
+    for c in ['close', 'volume', 'open_interest']:
+        df[c] = pd.to_numeric(df[c], errors='coerce')
+    df = df.dropna(subset=['close', 'volume', 'open_interest'])
+    df = df[df['volume'] > 0].reset_index(drop=True)
+    df = calc_accum_strength(df, args.window_strength)
+    zones = estimate_chipzones(df, args.window_zone, args.bins_pct, args.beta, args.half_life, args.quantile)
+    symbol = os.path.splitext(os.path.basename(args.csv))[0].split('_')[0].upper()
+    plot_chart(df, zones, symbol)
     if not zones.empty:
-        thresholds={c:zones[c].quantile(0.8) for c in ['recent_strength','all_strength','avg_strength']}
-        zones_fmt=highlight_csv(zones.copy(),thresholds)
-        csv_cols=['low','high','recent_strength','all_strength','avg_strength','persistent','zone_type']
-        zones_fmt.to_csv(f"{symbol}_chipzones_hybrid.csv",index=False,encoding='utf-8-sig',columns=csv_cols)
+        thresholds = {c: zones[c].quantile(0.8) for c in ['recent_strength', 'all_strength', 'avg_strength']}
+        zones_fmt = highlight_csv(zones.copy(), thresholds)
+        csv_cols = ['low', 'high', 'recent_strength', 'all_strength', 'avg_strength', 'persistent', 'zone_type']
+        zones_fmt.to_csv(f"{symbol}_chipzones_hybrid.csv", index=False, encoding='utf-8-sig', columns=csv_cols)
         print(f"[OK] 数据表已保存：{symbol}_chipzones_hybrid.csv")
 
-if __name__=="__main__":
+if __name__ == "__main__":
     main()
