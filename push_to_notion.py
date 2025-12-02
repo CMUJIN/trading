@@ -2,120 +2,119 @@
 # -*- coding: utf-8 -*-
 
 """
-push_to_notion.py (CDN + Forced Refresh Version)
+push_to_notion.py (Notion Compatible Version)
 --------------------------------------------------------
-🚀 彻底解决 Notion 图片不刷新的缓存问题：
-    - 每张图片 URL 自动附加更新时间戳 ?t=xxxxxx
-    - Notion 认为是全新 URL，从而强制重新加载最新图片
-
-📌 保持你原有逻辑完全不变，只修复图片更新问题
+✅ 使用 raw.githubusercontent.com → Notion 稳定显示图片
+✅ 每张图片自动附加更新时间戳 ?t=xxxx → 强制刷新
+✅ 完整保留你原有所有逻辑结构
 """
 
 import os
 import csv
 import yaml
-import time
 from notion_client import Client
-from notion_client.errors import APIResponseError
 import glob
 from datetime import datetime
 
 # -------------------------------------------
-# 固定使用 jsDelivr CDN
+# 🚀 使用 raw.githubusercontent（Notion 100% 支持）
 # -------------------------------------------
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 NOTION_DB = os.getenv("NOTION_DB")
 NOTION_PARENT_PAGE = os.getenv("NOTION_PARENT_PAGE")
 
-PAGES_BASE = "https://cdn.jsdelivr.net/gh/CMUJIN/trading@main/docs"
+# 旧版（不兼容 Notion）：
+# PAGES_BASE = "https://cdn.jsdelivr.net/gh/CMUJIN/trading@main/docs"
+
+# 新版（100% Notion 兼容）
+PAGES_BASE = "https://raw.githubusercontent.com/CMUJIN/trading/main/docs"
 
 notion = Client(auth=NOTION_TOKEN)
 
 
 # -----------------------------
-# 公共函数
+# 工具函数
 # -----------------------------
 def safe_text_block(content, block_type="heading_2"):
     return {
         "object": "block",
         "type": block_type,
-        block_type: {"rich_text": [{"type": "text", "text": {"content": str(content)}}]},
+        block_type: {
+            "rich_text": [
+                {"type": "text", "text": {"content": str(content)}}
+            ]
+        },
     }
 
 
-# -----------------------------
-# 清空目录页
-# -----------------------------
 def clear_directory(directory_id):
+    """清空父页面内容，但保留子页面/数据库"""
     try:
         children = notion.blocks.children.list(directory_id)["results"]
         cleared = 0
         for child in children:
             if child["type"] in ("child_page", "child_database"):
-                print(f"[SAFE MODE] ⚠️ Skipped deleting {child['type']} block ({child['id']})")
+                print(f"[SAFE MODE] Skip {child['type']} {child['id']}")
                 continue
             notion.blocks.delete(child["id"])
             cleared += 1
-        print(f"[push_to_notion] 🧹 Cleared {cleared} blocks (skipped database/page blocks).")
+        print(f"[push_to_notion] 🧹 Cleared {cleared} blocks.")
     except Exception as e:
         print(f"[WARN] Failed to clear directory: {e}")
 
 
-# -----------------------------
-# 获取文件更新时间
-# -----------------------------
 def get_file_update_time(path):
     if not os.path.exists(path):
-        return "❌ 文件不存在"
+        return "❌ File Not Found"
     ts = os.path.getmtime(path)
     return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
 
 
-# ===================================================
-# 生成带时间戳强制刷新的 CDN 图片 URL
-# ===================================================
-def build_cdn_url_with_ts(filepath, url_base):
+def build_url_with_ts(filepath, base_url):
+    """生成带时间戳的 URL 强制刷新"""
     if not os.path.exists(filepath):
         return None
-    ts = int(os.path.getmtime(filepath))  # 时间戳作为 Notion 缓存刷新参数
-    return f"{url_base}?t={ts}"
+    ts = int(os.path.getmtime(filepath))
+    return f"{base_url}?t={ts}"
 
 
 # -----------------------------
 # 构建目录页
 # -----------------------------
 def build_symbol_directory(symbols):
-    print("[push_to_notion] 🔁 Rebuilding Symbol Directory page...")
+    print("[push_to_notion] Building Symbol Directory...")
     directory_id = NOTION_PARENT_PAGE
+
     clear_directory(directory_id)
     children = []
 
     for code in symbols:
+        # ================= PATHS =================
         csv_path = f"docs/{code}/{code}_chipzones_hybrid.csv"
-        img_path = f"docs/{code}/{code}_chipzones_hybrid.png"
+        chip_path = f"docs/{code}/{code}_chipzones_hybrid.png"
         trend_path = f"docs/{code}/{code}_trend_v6.png"
 
-        # 标准 CDN 路径（不带参数）
+        # ================= RAW BASE URLs =================
         csv_url = f"{PAGES_BASE}/{code}/{code}_chipzones_hybrid.csv"
-        img_base_url = f"{PAGES_BASE}/{code}/{code}_chipzones_hybrid.png"
+        chip_base_url = f"{PAGES_BASE}/{code}/{code}_chipzones_hybrid.png"
         trend_base_url = f"{PAGES_BASE}/{code}/{code}_trend_v6.png"
 
-        # ============================
-        # 🔥 强制刷新的 CDN 外链（带时间戳）
-        # ============================
-        img_url = build_cdn_url_with_ts(img_path, img_base_url)
-        trend_url = build_cdn_url_with_ts(trend_path, trend_base_url)
+        # ================= 强制刷新 URL =================
+        chip_url = build_url_with_ts(chip_path, chip_base_url)
+        trend_url = build_url_with_ts(trend_path, trend_base_url)
 
-        # 更新时间
+        # 更新时间显示
         csv_time = get_file_update_time(csv_path)
-        img_time = get_file_update_time(img_path)
-        last_update = f"📅 Last Updated: CSV={csv_time} | IMG={img_time}"
+        chip_time = get_file_update_time(chip_path)
 
-        # 标题
-        children.append(safe_text_block(f"📊 {code} Analysis"))
-        children.append(safe_text_block(last_update, "paragraph"))
+        children.append(safe_text_block(f"📈 {code} Analysis"))
+        children.append(
+            safe_text_block(
+                f"📅 Last Updated: CSV={csv_time} | IMG={chip_time}", "paragraph"
+            )
+        )
 
-        # -------- trend_v6 图 (强制刷新) -----------
+        # ------------ Trend_v6 图 ------------
         if trend_url:
             children.append({
                 "object": "block",
@@ -123,22 +122,23 @@ def build_symbol_directory(symbols):
                 "image": {"type": "external", "external": {"url": trend_url}},
             })
         else:
-            children.append(safe_text_block(f"⚠️ Trend_v6 image not found for {code}", "paragraph"))
+            children.append(safe_text_block(f"⚠️ No Trend_v6 for {code}", "paragraph"))
 
-        # -------- chipzones 图 (强制刷新) -----------
-        if img_url:
+        # ------------ Chipzones 图 ------------
+        if chip_url:
             children.append({
                 "object": "block",
                 "type": "image",
-                "image": {"type": "external", "external": {"url": img_url}},
+                "image": {"type": "external", "external": {"url": chip_url}},
             })
         else:
-            children.append(safe_text_block(f"⚠️ Chipzones image not found for {code}", "paragraph"))
+            children.append(safe_text_block(f"⚠️ Chipzones Image Missing ({code})", "paragraph"))
 
-        # -------- CSV 内容展示 -----------
+        # ------------ CSV 表格展示 ------------
         if os.path.exists(csv_path):
             with open(csv_path, "r", encoding="utf-8-sig") as f:
                 csv_text = f.read()
+
             children.append({
                 "object": "block",
                 "type": "code",
@@ -148,41 +148,40 @@ def build_symbol_directory(symbols):
                 },
             })
         else:
-            children.append(safe_text_block(f"⚠️ CSV not found for {code}", "paragraph"))
+            children.append(safe_text_block(f"⚠️ CSV Missing: {code}", "paragraph"))
 
+    # 全部追加到 Notion 页面
     notion.blocks.children.append(directory_id, children=children)
-    print(f"[push_to_notion] ✅ Directory rebuilt with {len(symbols)} symbols.")
+    print(f"[push_to_notion] ✅ Directory updated with {len(symbols)} symbols.")
 
 
 # -----------------------------
-# 主入口
+# 主程序
 # -----------------------------
 def main():
-    print("[push_to_notion] Starting upload process (Skip Database Upload Mode)...")
+    print("[push_to_notion] Starting...")
 
-    # 自动读取所有 config 文件
     config_files = glob.glob("config*.yaml")
-    print(f"[INFO] Found config files: {config_files}")
+    print(f"[INFO] Found config: {config_files}")
 
     all_symbols = []
 
     for config_file in config_files:
-        print(f"[INFO] Using config file: {config_file}")
         try:
             with open(config_file, "r", encoding="utf-8") as f:
                 config = yaml.safe_load(f)
             raw_symbols = config.get("symbols", [])
-            symbols = [s["code"] if isinstance(s, dict) and "code" in s else s for s in raw_symbols]
+            symbols = [
+                s["code"] if isinstance(s, dict) and "code" in s else s
+                for s in raw_symbols
+            ]
             all_symbols.extend(symbols)
-            print(f"[INFO] Symbols in {config_file}: {symbols}")
+            print(f"[INFO] {config_file}: {symbols}")
         except Exception as e:
             print(f"[ERROR] Failed to read {config_file}: {e}")
 
-    print(f"[INFO] All symbols to include in directory: {all_symbols}")
-
     build_symbol_directory(all_symbols)
-
-    print("[push_to_notion] ✅ All tasks completed (Database upload skipped).")
+    print("[push_to_notion] 🎉 All Done!")
 
 
 if __name__ == "__main__":
