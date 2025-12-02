@@ -1,3 +1,16 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+push_to_notion.py (CDN + Forced Refresh Version)
+--------------------------------------------------------
+🚀 彻底解决 Notion 图片不刷新的缓存问题：
+    - 每张图片 URL 自动附加更新时间戳 ?t=xxxxxx
+    - Notion 认为是全新 URL，从而强制重新加载最新图片
+
+📌 保持你原有逻辑完全不变，只修复图片更新问题
+"""
+
 import os
 import csv
 import yaml
@@ -8,16 +21,12 @@ import glob
 from datetime import datetime
 
 # -------------------------------------------
-# 🔥 固定使用 jsDelivr CDN，避免 Notion 无法加载
+# 固定使用 jsDelivr CDN
 # -------------------------------------------
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 NOTION_DB = os.getenv("NOTION_DB")
 NOTION_PARENT_PAGE = os.getenv("NOTION_PARENT_PAGE")
 
-# 以前是 raw/githubpages → 会导致 Notion 失败
-# PAGES_BASE = os.getenv("PAGES_BASE", "https://cmujin.github.io/trading")
-
-# 现在强制 CDN（不会再从 RAW 加载）
 PAGES_BASE = "https://cdn.jsdelivr.net/gh/CMUJIN/trading@main/docs"
 
 notion = Client(auth=NOTION_TOKEN)
@@ -62,8 +71,18 @@ def get_file_update_time(path):
     return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
 
 
+# ===================================================
+# 生成带时间戳强制刷新的 CDN 图片 URL
+# ===================================================
+def build_cdn_url_with_ts(filepath, url_base):
+    if not os.path.exists(filepath):
+        return None
+    ts = int(os.path.getmtime(filepath))  # 时间戳作为 Notion 缓存刷新参数
+    return f"{url_base}?t={ts}"
+
+
 # -----------------------------
-# 构建目录页（CDN 版本，无 Query 参数）
+# 构建目录页
 # -----------------------------
 def build_symbol_directory(symbols):
     print("[push_to_notion] 🔁 Rebuilding Symbol Directory page...")
@@ -74,10 +93,18 @@ def build_symbol_directory(symbols):
     for code in symbols:
         csv_path = f"docs/{code}/{code}_chipzones_hybrid.csv"
         img_path = f"docs/{code}/{code}_chipzones_hybrid.png"
+        trend_path = f"docs/{code}/{code}_trend_v6.png"
 
-        # ----------- CDN 外链（新版）-----------
+        # 标准 CDN 路径（不带参数）
         csv_url = f"{PAGES_BASE}/{code}/{code}_chipzones_hybrid.csv"
-        img_url = f"{PAGES_BASE}/{code}/{code}_chipzones_hybrid.png"
+        img_base_url = f"{PAGES_BASE}/{code}/{code}_chipzones_hybrid.png"
+        trend_base_url = f"{PAGES_BASE}/{code}/{code}_trend_v6.png"
+
+        # ============================
+        # 🔥 强制刷新的 CDN 外链（带时间戳）
+        # ============================
+        img_url = build_cdn_url_with_ts(img_path, img_base_url)
+        trend_url = build_cdn_url_with_ts(trend_path, trend_base_url)
 
         # 更新时间
         csv_time = get_file_update_time(csv_path)
@@ -88,11 +115,8 @@ def build_symbol_directory(symbols):
         children.append(safe_text_block(f"📊 {code} Analysis"))
         children.append(safe_text_block(last_update, "paragraph"))
 
-        # -------- trend_v6 图（CDN 外链）-----------
-        trend_path = f"docs/{code}/{code}_trend_v6.png"
-        trend_url = f"{PAGES_BASE}/{code}/{code}_trend_v6.png"
-
-        if os.path.exists(trend_path):
+        # -------- trend_v6 图 (强制刷新) -----------
+        if trend_url:
             children.append({
                 "object": "block",
                 "type": "image",
@@ -101,8 +125,8 @@ def build_symbol_directory(symbols):
         else:
             children.append(safe_text_block(f"⚠️ Trend_v6 image not found for {code}", "paragraph"))
 
-        # -------- chipzones 图（CDN 外链）-----------
-        if os.path.exists(img_path):
+        # -------- chipzones 图 (强制刷新) -----------
+        if img_url:
             children.append({
                 "object": "block",
                 "type": "image",
@@ -111,7 +135,7 @@ def build_symbol_directory(symbols):
         else:
             children.append(safe_text_block(f"⚠️ Chipzones image not found for {code}", "paragraph"))
 
-        # -------- CSV 内容展示（本地读取 → Notion code block）-----------
+        # -------- CSV 内容展示 -----------
         if os.path.exists(csv_path):
             with open(csv_path, "r", encoding="utf-8-sig") as f:
                 csv_text = f.read()
