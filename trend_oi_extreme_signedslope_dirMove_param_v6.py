@@ -152,7 +152,11 @@ def main():
 
     plt.tight_layout()
 
-    out = os.path.splitext(args.file)[0] + "_trend_v6.png"
+    # === 使用小时级别的时间戳（YYYYMMDD_HH） ===
+    ts = datetime.now().strftime("%Y%m%d_%H")
+
+    # 输出的文件名带时间戳
+    out = f"{os.path.splitext(args.file)[0]}_trend_v6_{ts}.png"
     plt.savefig(out, dpi=300)
     print(f"✅ Trend plot saved to: {out}")
     print(f"Dynamic volatility={volatility_base:.4f} | slope_dyn={slope_dyn:.6f} | move_dyn={move_dyn:.4f}")
