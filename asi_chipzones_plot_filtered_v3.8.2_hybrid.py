@@ -206,9 +206,17 @@ def plot_chart(df, zones, symbol):
     save_dir = f"docs/{symbol}"
     os.makedirs(save_dir, exist_ok=True)
 
-    # 输出文件名：symbol_trend_v6_YYYYMMDD_HH.png
-    trend_out_png = f"{save_dir}/{symbol}_trend_v6_{ts}.png"
+    # 输出文件名：symbol_chipzones_hybrid_YYYYMMDD_HH.png
+    chipzones_out_png = f"{save_dir}/{symbol}_chipzones_hybrid_{ts}.png"
 
+    # 保存 chipzones 图
+    plt.savefig(chipzones_out_png, dpi=300)
+    plt.close(fig)
+
+    print(f"[OK] Chipzones 图像已保存：{chipzones_out_png}")
+
+    # === 保存 trend_v6 图 ===
+    trend_out_png = f"{save_dir}/{symbol}_trend_v6_{ts}.png"
     plt.savefig(trend_out_png, dpi=300)
     plt.close(fig)
 
