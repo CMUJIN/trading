@@ -1,6 +1,6 @@
 symbols:
-  - code: LH2601
-    start: 2025-09-12
+  - code: SH2603
+    start: 2025-10-20
 
 freq: "60m"
 analysis:
