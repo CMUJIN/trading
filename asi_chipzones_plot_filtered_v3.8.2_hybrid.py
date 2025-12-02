@@ -192,10 +192,21 @@ def plot_chart(df,zones,symbol):
         ax2.set_xticks(x[::step])
         ax2.set_xticklabels(df['datetime'].dt.strftime('%m-%d %H:%M')[::step],rotation=30,ha='right')
     plt.tight_layout()
-    out_png=f"{symbol}_chipzones_hybrid.png"
-    plt.savefig(out_png,dpi=300)
+    # === 使用小时级别的时间戳（YYYYMMDD_HH） ===
+    ts = datetime.now().strftime("%Y%m%d_%H")
+    
+    # 确保 docs/<symbol>/ 目录存在
+    save_dir = f"docs/{symbol}"
+    os.makedirs(save_dir, exist_ok=True)
+    
+    # 输出文件名：symbol_chipzones_hybrid_YYYYMMDD_HH.png
+    out_png = f"{save_dir}/{symbol}_chipzones_hybrid_{ts}.png"
+    
+    plt.savefig(out_png, dpi=300)
     plt.close(fig)
+    
     print(f"[OK] 图像已保存：{out_png}")
+
 
 def highlight_csv(df,thresholds):
     for c in ['recent_strength','all_strength','avg_strength']:
