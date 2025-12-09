@@ -1,6 +1,6 @@
 symbols:
-  - code: EB2602
-    start: 2025-08-15
+  - code: SI2605
+    start: 2025-11-28
 
 freq: "60m"
 analysis:
