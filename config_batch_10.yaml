@@ -2,7 +2,7 @@ symbols:
   - code: SH2603
     start: 2025-10-20
   - code: I2605
-    start: 2025-12-01
+    start: 2025-11-15
 
 
 freq: "60m"
