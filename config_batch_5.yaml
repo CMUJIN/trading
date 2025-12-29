@@ -1,8 +1,6 @@
 symbols:
-  - code: SI2605
-    start: 2025-11-28
-  - code: AO2602
-    start: 2025-11-13
+  - code: AO2605
+    start: 2025-10-01
 
 freq: "60m"
 analysis:
